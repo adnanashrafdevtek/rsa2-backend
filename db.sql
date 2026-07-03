@@ -9,6 +9,7 @@ SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0;
 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0;
 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 
+DROP SCHEMA IF EXISTS `mydb`;
 CREATE SCHEMA IF NOT EXISTS `mydb` DEFAULT CHARACTER SET utf8 ;
 
 CREATE TABLE IF NOT EXISTS `mydb`.`user` (
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `mydb`.`user` (
   `last_name` VARCHAR(45) NOT NULL,
   `email_address` VARCHAR(45) NOT NULL,
   `role_id` INT(11) NOT NULL,
-  PRIMARY KEY (`id`, `role_id`),
+  PRIMARY KEY (`id`),
   UNIQUE INDEX `iduser_UNIQUE` (`id` ASC) ,
   UNIQUE INDEX `email_address_UNIQUE` (`email_address` ASC) ,
   INDEX `fk_user_role1_idx` (`role_id` ASC) ,
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS `mydb`.`class` (
   `name` VARCHAR(45) NOT NULL,
   `teacher_id` INT(11) NOT NULL,
   `room_id` INT(11) NOT NULL,
-  PRIMARY KEY (`id`, `teacher_id`, `room_id`),
+  `grade_level` VARCHAR(45) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
   INDEX `fk_class_user_idx` (`teacher_id` ASC) ,
   INDEX `fk_class_room1_idx` (`room_id` ASC) ,
   CONSTRAINT `fk_class_user`
@@ -62,7 +64,9 @@ CREATE TABLE IF NOT EXISTS `mydb`.`room` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `event_id` INT(11) NOT NULL,
-  PRIMARY KEY (`id`, `event_id`),
+  `class_id` INT(11) NULL DEFAULT NULL,
+  `period` VARCHAR(45) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
   INDEX `fk_room_event1_idx` (`event_id` ASC) ,
   CONSTRAINT `fk_room_event1`
     FOREIGN KEY (`event_id`)

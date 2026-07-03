@@ -5,16 +5,26 @@ const mysql = require('mysql2/promise');
   try {
     const sql = fs.readFileSync('db.sql', 'utf8');
 
-    const conn = await mysql.createConnection({
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '3306'),
+    const connConfig = {
       user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '3474',
       multipleStatements: true,
-    });
+    };
+
+    if (process.env.DB_SOCKET) {
+      connConfig.socketPath = process.env.DB_SOCKET;
+    } else {
+      connConfig.host = process.env.DB_HOST || 'localhost';
+      connConfig.port = parseInt(process.env.DB_PORT || '3306');
+    }
+
+    if (process.env.DB_PASSWORD) {
+      connConfig.password = process.env.DB_PASSWORD;
+    }
+
+    const conn = await mysql.createConnection(connConfig);
 
     console.log('Connected to MySQL, executing db.sql...');
-    const [result] = await conn.query(sql);
+    await conn.query(sql);
     console.log('Execution finished.');
     await conn.end();
   } catch (err) {
