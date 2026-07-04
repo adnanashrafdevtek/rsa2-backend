@@ -81,21 +81,31 @@ function registerTableRoutes({ collectionPath, table, aliases = [], idField = 'i
 
 app.use(express.json());
 
-async function ensureRoomColumns() {
+async function columnExists(table, column) {
+  const [rows] = await db.query(
+    'SELECT COUNT(*) AS count FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [table, column]
+  );
+  return rows[0].count > 0;
+}
+
+async function ensureColumn(table, column, definition) {
   try {
-    await db.query('ALTER TABLE `room` ADD COLUMN IF NOT EXISTS `class_id` INT NULL');
-    await db.query('ALTER TABLE `room` ADD COLUMN IF NOT EXISTS `period` VARCHAR(45) NULL');
+    if (!(await columnExists(table, column))) {
+      await db.query(`ALTER TABLE \`${table}\` ADD COLUMN ${definition}`);
+    }
   } catch (err) {
-    console.error('Unable to ensure room columns:', err.message);
+    console.error(`Unable to ensure ${table}.${column} column:`, err.message);
   }
 }
 
+async function ensureRoomColumns() {
+  await ensureColumn('room', 'class_id', '`class_id` INT NULL');
+  await ensureColumn('room', 'period', '`period` VARCHAR(45) NULL');
+}
+
 async function ensureClassColumns() {
-  try {
-    await db.query('ALTER TABLE `class` ADD COLUMN IF NOT EXISTS `grade_level` VARCHAR(45) NULL');
-  } catch (err) {
-    console.error('Unable to ensure class columns:', err.message);
-  }
+  await ensureColumn('class', 'grade_level', '`grade_level` VARCHAR(45) NULL');
 }
 
 function getUserRole(req) {
