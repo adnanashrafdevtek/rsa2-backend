@@ -1,8 +1,8 @@
 // src/app.js
-// require('dotenv').config();
+ require('dotenv').config();
 const express = require('express');
 const app = express();
-const dbName="planner";
+const dbName="mydb2";
 const username="admin";
 const db = require('./db');
 
@@ -83,8 +83,16 @@ app.use(express.json());
 
 async function ensureRoomColumns() {
   try {
-    await db.query('ALTER TABLE `room` ADD COLUMN IF NOT EXISTS `class_id` INT NULL');
-    await db.query('ALTER TABLE `room` ADD COLUMN IF NOT EXISTS `period` VARCHAR(45) NULL');
+    // Check if the column exists first
+    const [columns] = await db.query("SHOW COLUMNS FROM `room` LIKE 'class_id'");
+    if (columns.length === 0) {
+      await db.query('ALTER TABLE `room` ADD COLUMN `class_id` INT NULL');
+    }
+    
+    const [columns2] = await db.query("SHOW COLUMNS FROM `room` LIKE 'period'");
+    if (columns2.length === 0) {
+      await db.query('ALTER TABLE `room` ADD COLUMN `period` VARCHAR(45) NULL');
+    }
   } catch (err) {
     console.error('Unable to ensure room columns:', err.message);
   }
@@ -92,7 +100,10 @@ async function ensureRoomColumns() {
 
 async function ensureClassColumns() {
   try {
-    await db.query('ALTER TABLE `class` ADD COLUMN IF NOT EXISTS `grade_level` VARCHAR(45) NULL');
+    const [columns] = await db.query("SHOW COLUMNS FROM `class` LIKE 'grade_level'");
+    if (columns.length === 0) {
+      await db.query('ALTER TABLE `class` ADD COLUMN `grade_level` VARCHAR(45) NULL');
+    }
   } catch (err) {
     console.error('Unable to ensure class columns:', err.message);
   }
@@ -114,6 +125,7 @@ ensureRoomColumns();
 ensureClassColumns();
 
 // Simple CORS middleware for local development
+// Replace your existing CORS middleware with this block
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const allowedOrigins = [
@@ -130,7 +142,8 @@ app.use((req, res, next) => {
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // ADD x-user-role AND x-role HERE
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-role, x-role');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
 
   if (req.method === 'OPTIONS') {
@@ -274,6 +287,26 @@ app.get('/club_has_event/:club_id/:event_id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+app.post('/api/login', async (req, res) => {
+  try {
+    const { username, password } = req.body; 
+    
+    // Ensure you are querying 'email_address' and 'password'
+    const [rows] = await db.query(
+      'SELECT * FROM `user` WHERE `email_address` = ? AND `password` = ?', 
+      [username, password]
+    );
+    
+    if (rows.length > 0) {
+      res.status(200).json({ status: 'ok', message: 'Login successful', user: rows[0] });
+    } else {
+      res.status(401).json({ status: 'error', message: 'Invalid credentials' });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: 'Server error' });
   }
 });
 
