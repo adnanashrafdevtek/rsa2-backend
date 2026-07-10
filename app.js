@@ -18,7 +18,8 @@ const allowedColumns = {
   student_class: ['id', 'grade_level', 'user_iduser', 'class_idclass'],
   club: ['id', 'name', 'description'],
   event: ['id', 'name', 'description'],
-  club_has_event: ['club_id', 'event_id']
+  club_has_event: ['club_id', 'event_id'],
+  attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by']
 };
 
 function quoteIdentifier(identifier) {
@@ -133,6 +134,63 @@ async function ensureUserSchedulesTable() {
   }
 }
 
+async function ensureStudentClassTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS \`student_class\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`grade_level\` VARCHAR(45) NULL,
+        \`user_iduser\` INT NOT NULL,
+        \`class_idclass\` INT NOT NULL,
+        PRIMARY KEY (\`id\`, \`user_iduser\`, \`class_idclass\`),
+        INDEX \`fk_student_class_user1_idx\` (\`user_iduser\` ASC),
+        INDEX \`fk_student_class_class1_idx\` (\`class_idclass\` ASC)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err) {
+    console.error('Unable to ensure student_class table:', err.message);
+  }
+}
+
+async function ensureEventTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS \`event\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`name\` VARCHAR(255) NOT NULL,
+        \`description\` VARCHAR(255) NULL,
+        PRIMARY KEY (\`id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err) {
+    console.error('Unable to ensure event table:', err.message);
+  }
+}
+
+async function ensureAttendanceTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS \`attendance\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`student_id\` INT NOT NULL,
+        \`class_id\` INT NOT NULL,
+        \`teacher_id\` INT NOT NULL,
+        \`date\` DATE NOT NULL,
+        \`status\` VARCHAR(45) NOT NULL DEFAULT 'present',
+        \`marked_by\` VARCHAR(255) NULL,
+        \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`unique_attendance\` (\`student_id\`, \`class_id\`, \`date\`),
+        INDEX \`idx_class_date\` (\`class_id\`, \`date\` ASC),
+        INDEX \`idx_teacher_date\` (\`teacher_id\`, \`date\` ASC)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err) {
+    console.error('Unable to ensure attendance table:', err.message);
+  }
+}
+
 function getUserRole(req) {
   return String(req.get('x-user-role') || req.get('x-role') || 'Student').trim();
 }
@@ -148,6 +206,9 @@ function requireAdmin(req, res, next) {
 ensureRoomColumns();
 ensureClassColumns();
 ensureUserSchedulesTable();
+ensureStudentClassTable();
+ensureEventTable();
+ensureAttendanceTable();
 
 // Simple CORS middleware for local development
 // Replace your existing CORS middleware with this block
@@ -504,6 +565,110 @@ app.get('/club_has_event/:club_id/:event_id', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
+// Attendance endpoints
+app.get('/attendance', async (req, res) => {
+  try {
+    const filters = req.query;
+    const query = buildQuery('attendance', filters);
+    const [rows] = await db.query(query.sql, query.values);
+    res.json({ status: 'ok', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/attendance', async (req, res) => {
+  try {
+    const { student_id, class_id, teacher_id, date, status, marked_by } = req.body;
+    
+    if (!student_id || !class_id || !teacher_id || !date) {
+      return res.status(400).json({ status: 'error', message: 'Missing required fields' });
+    }
+
+    // Check for existing attendance
+    const [existing] = await db.query(
+      'SELECT id FROM `attendance` WHERE `student_id` = ? AND `class_id` = ? AND `date` = ?',
+      [student_id, class_id, date]
+    );
+
+    if (existing.length > 0) {
+      // Update existing
+      await db.query(
+        'UPDATE `attendance` SET `status` = ?, `marked_by` = ? WHERE `student_id` = ? AND `class_id` = ? AND `date` = ?',
+        [status || 'present', marked_by, student_id, class_id, date]
+      );
+      res.json({ status: 'ok', message: 'Attendance updated' });
+    } else {
+      // Create new
+      await db.query(
+        'INSERT INTO `attendance` (`student_id`, `class_id`, `teacher_id`, `date`, `status`, `marked_by`) VALUES (?, ?, ?, ?, ?, ?)',
+        [student_id, class_id, teacher_id, date, status || 'present', marked_by]
+      );
+      res.json({ status: 'ok', message: 'Attendance created' });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/attendance/bulk', async (req, res) => {
+  try {
+    const { records } = req.body;
+    
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'Records array required' });
+    }
+
+    // Delete existing attendance for the same date and class
+    if (records.length > 0) {
+      const firstRecord = records[0];
+      await db.query(
+        'DELETE FROM `attendance` WHERE `class_id` = ? AND `date` = ?',
+        [firstRecord.class_id, firstRecord.date]
+      );
+    }
+
+    // Insert all new records
+    for (const record of records) {
+      const { student_id, class_id, teacher_id, date, status, marked_by } = record;
+      if (student_id && class_id && teacher_id && date) {
+        await db.query(
+          'INSERT INTO `attendance` (`student_id`, `class_id`, `teacher_id`, `date`, `status`, `marked_by`) VALUES (?, ?, ?, ?, ?, ?)',
+          [student_id, class_id, teacher_id, date, status || 'present', marked_by]
+        );
+      }
+    }
+
+    res.json({ status: 'ok', message: 'Attendance records saved' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.put('/attendance/:id', async (req, res) => {
+  try {
+    const { status, marked_by } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ status: 'error', message: 'Status required' });
+    }
+
+    await db.query(
+      'UPDATE `attendance` SET `status` = ?, `marked_by` = ? WHERE `id` = ?',
+      [status, marked_by, req.params.id]
+    );
+
+    res.json({ status: 'ok', message: 'Attendance updated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body; 
