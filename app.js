@@ -5,6 +5,7 @@ const app = express();
 const dbName="mydb2";
 const username="admin";
 const db = require('./db');
+const { normalizeRoomPayload, resolveRoomEventId } = require('./roomPayload');
 
 // Allowed filter columns per table to avoid SQL injection
 const allowedColumns = {
@@ -453,18 +454,27 @@ app.delete('/classes/:id', requireAdmin, async (req, res) => {
 
 app.post('/rooms', requireAdmin, async (req, res) => {
   try {
-    const name = String(req.body?.name || '').trim();
-    const eventId = Number(req.body?.event_id);
-    const classId = req.body?.class_id ? Number(req.body.class_id) : null;
-    const period = String(req.body?.period || '').trim();
+    let { name, eventId, classId, period } = normalizeRoomPayload(req.body);
 
-    if (!name || !eventId) {
-      return res.status(400).json({ status: 'error', message: 'Room name and event ID are required' });
+    if (!name) {
+      return res.status(400).json({ status: 'error', message: 'Room name is required' });
     }
 
-    const [eventRows] = await db.query('SELECT id FROM `event` WHERE id = ?', [eventId]);
-    if (!eventRows.length) {
-      return res.status(400).json({ status: 'error', message: 'Event not found' });
+    if (eventId !== null) {
+      const [eventRows] = await db.query('SELECT id FROM `event` WHERE id = ?', [eventId]);
+      if (!eventRows.length) {
+        return res.status(400).json({ status: 'error', message: 'Event not found' });
+      }
+    } else {
+      const resolvedEventId = await resolveRoomEventId({
+        roomName: name,
+        eventId,
+        createEvent: async ({ name: eventName, description }) => {
+          const [result] = await db.query('INSERT INTO `event` (name, description) VALUES (?, ?)', [eventName, description]);
+          return result;
+        }
+      });
+      eventId = resolvedEventId;
     }
 
     if (classId) {
@@ -485,18 +495,22 @@ app.post('/rooms', requireAdmin, async (req, res) => {
 app.put('/rooms/:id', requireAdmin, async (req, res) => {
   try {
     const roomId = Number(req.params.id);
-    const name = String(req.body?.name || '').trim();
-    const eventId = Number(req.body?.event_id);
-    const classId = req.body?.class_id ? Number(req.body.class_id) : null;
-    const period = String(req.body?.period || '').trim();
+    const { name, eventId, classId, period } = normalizeRoomPayload(req.body);
 
-    if (!roomId || !name || !eventId) {
-      return res.status(400).json({ status: 'error', message: 'Room ID, name, and event ID are required' });
+    if (!roomId || !name) {
+      return res.status(400).json({ status: 'error', message: 'Room ID and name are required' });
     }
 
     const [roomRows] = await db.query('SELECT id FROM `room` WHERE id = ?', [roomId]);
     if (!roomRows.length) {
       return res.status(404).json({ status: 'error', message: 'Room not found' });
+    }
+
+    if (eventId !== null) {
+      const [eventRows] = await db.query('SELECT id FROM `event` WHERE id = ?', [eventId]);
+      if (!eventRows.length) {
+        return res.status(400).json({ status: 'error', message: 'Event not found' });
+      }
     }
 
     await db.query('UPDATE `room` SET name = ?, event_id = ?, class_id = ?, period = ? WHERE id = ?', [name, eventId, classId, period || null, roomId]);
