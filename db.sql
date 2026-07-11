@@ -189,3 +189,7 @@ INSERT INTO `mydb`.`message` (`sender_id`, `receiver_id`, `message`) VALUES (2, 
 
 INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Orientation Morning', 'For new students', 1);
 INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Science Fair Day', 'Bring projects', 2);
+
+ALTER TABLE `mydb`.`user` 
+ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
+update `mydb`.`user` set password=test;
