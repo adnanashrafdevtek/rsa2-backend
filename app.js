@@ -1,6 +1,7 @@
 // src/app.js
  require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const app = express();
 const dbName="mydb2";
 const username="admin";
@@ -211,34 +212,17 @@ ensureStudentClassTable();
 ensureEventTable();
 ensureAttendanceTable();
 
-// Simple CORS middleware for local development
-// Replace your existing CORS middleware with this block
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const allowedOrigins = [
+app.use(cors({
+  origin: [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'http://localhost:3000',
     'http://127.0.0.1:3000'
-  ];
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  }
-
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  // ADD x-user-role AND x-role HERE
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-role, x-role');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-role', 'x-role']
+}));
 
 app.put('/users/:id', requireAdmin, async (req, res) => {
   try {
