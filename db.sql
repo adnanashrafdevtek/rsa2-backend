@@ -192,4 +192,4 @@ INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Scienc
 
 ALTER TABLE `mydb`.`user` 
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
-update `mydb`.`user` set password=test;
+update `mydb`.`user` set password="test";
