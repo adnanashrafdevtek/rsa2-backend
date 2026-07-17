@@ -26,7 +26,7 @@ const allowedColumns = {
   user_schedules: ['id', 'user_id', 'user_type', 'file_name', 'file_content'],
   student_class: ['id', 'grade_level', 'user_iduser', 'class_idclass'],
   club: ['id', 'name', 'description'],
-  event: ['id', 'name', 'description'],
+  event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by']
 };
@@ -194,12 +194,19 @@ async function ensureEventTable() {
         \`id\` INT NOT NULL AUTO_INCREMENT,
         \`name\` VARCHAR(255) NOT NULL,
         \`description\` VARCHAR(255) NULL,
+        \`room\` VARCHAR(255) NULL,
+        \`date\` DATETIME NULL,
         PRIMARY KEY (\`id\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   } catch (err) {
     console.error('Unable to ensure event table:', err.message);
   }
+}
+
+async function ensureEventColumns() {
+  await ensureColumnDefinition('event', 'date', 'DATETIME NULL');
+  await ensureColumn('event', 'room', 'VARCHAR(255) NULL');
 }
 
 async function ensureAttendanceTable() {
@@ -257,6 +264,7 @@ ensureScheduleColumns();
 ensureUserSchedulesTable();
 ensureStudentClassTable();
 ensureEventTable();
+ensureEventColumns();
 ensureAttendanceTable();
 
 // Simple CORS middleware for local development
@@ -358,13 +366,15 @@ app.post('/events', requireAdmin, async (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
     const description = String(req.body?.description || '').trim();
+    const room = String(req.body?.room || '').trim();
+    const date = String(req.body?.date || '').trim();
 
-    if (!name || !description) {
-      return res.status(400).json({ status: 'error', message: 'Announcement title and message are required' });
+    if (!name || !description || !room || !date) {
+      return res.status(400).json({ status: 'error', message: 'Event name, description, room, and date are required' });
     }
 
-    const [result] = await db.query('INSERT INTO `event` (name, description) VALUES (?, ?)', [name, description]);
-    res.status(201).json({ status: 'ok', message: 'Announcement created successfully', eventId: result.insertId });
+    const [result] = await db.query('INSERT INTO `event` (name, description, room, date) VALUES (?, ?, ?, ?)', [name, description, room, date]);
+    res.status(201).json({ status: 'ok', message: 'Event created successfully', eventId: result.insertId });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
