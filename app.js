@@ -6,6 +6,14 @@ const dbName="mydb2";
 const username="admin";
 const db = require('./db');
 const { normalizeRoomPayload, resolveRoomEventId } = require('./roomPayload');
+const { parseImportRows, normalizeHeader } = require('./importUsers');
+
+let XLSX;
+try {
+  XLSX = require('xlsx');
+} catch (err) {
+  XLSX = null;
+}
 
 // Allowed filter columns per table to avoid SQL injection
 const allowedColumns = {
@@ -307,6 +315,127 @@ app.post('/events', requireAdmin, async (req, res) => {
 
     const [result] = await db.query('INSERT INTO `event` (name, description) VALUES (?, ?)', [name, description]);
     res.status(201).json({ status: 'ok', message: 'Announcement created successfully', eventId: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+function decodeUploadBuffer(payload) {
+  if (Buffer.isBuffer(payload)) return payload;
+  if (Array.isArray(payload)) return Buffer.from(payload);
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    if (!trimmed) return Buffer.alloc(0);
+    try {
+      return Buffer.from(trimmed, 'base64');
+    } catch (err) {
+      return Buffer.from(trimmed);
+    }
+  }
+  return Buffer.alloc(0);
+}
+
+function pickRowValue(row, candidates) {
+  for (const key of candidates) {
+    const value = row?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return String(value).trim();
+    }
+  }
+  return '';
+}
+
+function getImportRows(fileBuffer, fileName) {
+  const ext = String(fileName || '').toLowerCase();
+  const extName = ext.includes('.') ? ext.substring(ext.lastIndexOf('.')) : '';
+
+  if (extName === '.csv') {
+    return parseImportRows(fileBuffer, fileName);
+  }
+
+  if (extName === '.xlsx' || extName === '.xls') {
+    if (!XLSX) {
+      throw new Error('Excel parsing library is not available');
+    }
+
+    const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    const firstSheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    return rows.map((row) => {
+      const normalizedRow = {};
+      Object.entries(row).forEach(([key, value]) => {
+        normalizedRow[normalizeHeader(key)] = String(value ?? '').trim();
+      });
+      return normalizedRow;
+    });
+  }
+
+  throw new Error('Unsupported file type. Please upload a CSV or Excel file.');
+}
+
+async function resolveRoleId(roleName) {
+  const normalizedRoleName = String(roleName || '').trim() || 'Student';
+  const [roleRows] = await db.query('SELECT id FROM `role` WHERE name = ? LIMIT 1', [normalizedRoleName]);
+  if (roleRows.length) return roleRows[0].id;
+
+  const [result] = await db.query('INSERT INTO `role` (name) VALUES (?)', [normalizedRoleName]);
+  return result.insertId;
+}
+
+app.post('/user/import-file', async (req, res) => {
+  try {
+    const fileBuffer = decodeUploadBuffer(req.body?.fileBuffer || req.body?.buffer || req.body?.file || req.body);
+    const fileName = String(req.body?.fileName || req.body?.file_name || req.body?.filename || 'import.csv');
+
+    if (!fileBuffer || !fileBuffer.length) {
+      return res.status(400).json({ status: 'error', message: 'A file upload is required' });
+    }
+
+    const rows = getImportRows(fileBuffer, fileName);
+    if (!rows.length) {
+      return res.json({ status: 'ok', insertedCount: 0, errors: [] });
+    }
+
+    const errors = [];
+    let insertedCount = 0;
+
+    for (const [index, row] of rows.entries()) {
+      const normalizedRow = {};
+      Object.entries(row || {}).forEach(([key, value]) => {
+        normalizedRow[normalizeHeader(key)] = String(value ?? '').trim();
+      });
+
+      const firstName = pickRowValue(normalizedRow, ['first_name', 'firstname', 'firstName']);
+      const lastName = pickRowValue(normalizedRow, ['last_name', 'lastname', 'lastName']);
+      const emailAddress = pickRowValue(normalizedRow, ['email_address', 'email', 'emailaddress', 'emailAddress']);
+      const roleName = pickRowValue(normalizedRow, ['role_name', 'role', 'rolename', 'roleName']);
+
+      if (!firstName || !lastName || !emailAddress) {
+        errors.push({ index: index + 2, message: 'Missing required first_name, last_name, or email_address' });
+        continue;
+      }
+
+      try {
+        const roleId = await resolveRoleId(roleName || 'Student');
+        const normalizedEmail = emailAddress.toLowerCase();
+        const [existingRows] = await db.query('SELECT id FROM `user` WHERE email_address = ? LIMIT 1', [normalizedEmail]);
+
+        if (existingRows.length) {
+          await db.query('UPDATE `user` SET first_name = ?, last_name = ?, role_id = ? WHERE id = ?', [firstName, lastName, roleId, existingRows[0].id]);
+        } else {
+          await db.query('INSERT INTO `user` (first_name, last_name, email_address, role_id) VALUES (?, ?, ?, ?)', [firstName, lastName, normalizedEmail, roleId]);
+        }
+
+        insertedCount += 1;
+      } catch (rowErr) {
+        errors.push({ index: index + 2, message: rowErr.message });
+      }
+    }
+
+    res.json({ status: 'ok', insertedCount, errors });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
