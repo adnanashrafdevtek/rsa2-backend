@@ -287,8 +287,18 @@ app.put('/users/:id', requireAdmin, async (req, res) => {
       updates.push('`role_id` = ?');
       values.push(roleRows[0].id);
     } else if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'role_id')) {
+      const roleId = Number(req.body.role_id);
+      if (!Number.isInteger(roleId) || roleId <= 0) {
+        return res.status(400).json({ status: 'error', message: 'Role ID is required' });
+      }
+
+      const [roleRows] = await db.query('SELECT id FROM `role` WHERE id = ? LIMIT 1', [roleId]);
+      if (!roleRows.length) {
+        return res.status(400).json({ status: 'error', message: 'Role not found' });
+      }
+
       updates.push('`role_id` = ?');
-      values.push(Number(req.body.role_id));
+      values.push(roleId);
     }
 
     if (!updates.length) {
