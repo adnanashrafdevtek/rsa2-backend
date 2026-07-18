@@ -1,5 +1,15 @@
 // src/app.js
  require('dotenv').config();
+ const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+  host: "sandbox.smtp.mailtrap.io",
+  port: 2525,
+  auth: {
+    user: "YOUR_MAILTRAP_USERNAME",
+    pass: "YOUR_MAILTRAP_PASSWORD"
+  }
+});
 const express = require('express');
 const app = express();
 const dbName="mydb2";
@@ -832,7 +842,59 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Server error' });
   }
 });
+app.post('/api/request-reset', async (req, res) => {
+  const { email } = req.body;
+  const token = Math.floor(100000 + Math.random() * 900000).toString();
 
+  try {
+    // 1. Save token to DB
+    const [result] = await db.query('UPDATE `user` SET `reset_token` = ? WHERE `email_address` = ?', [token, email]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    // 2. Log to console
+    console.log(`Reset Token for ${email}: ${token}`);
+    
+    // 3. Attempt to send email, but don't crash if it fails
+    try {
+      await transporter.sendMail({
+        from: '"System" <no-reply@yourdomain.com>',
+        to: email,
+        subject: "Password Reset Token",
+        text: `Your token is: ${token}`
+      });
+    } catch (emailErr) {
+      console.error("Mailtrap connection failed, check your credentials:", emailErr.message);
+    }
+
+    // Always respond with success if the token was generated
+    res.json({ status: 'ok', message: 'Token generated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: 'Database error' });
+  }
+});
+app.get('/api/volunteers', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM volunteers');
+    res.json({ mysqlResult: rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+// Add this block to your app.js
+app.get('/volunteers', async (req, res) => {
+  try {
+    // Ensure 'volunteers' matches your actual database table name exactly
+    const [rows] = await db.query('SELECT * FROM volunteers'); 
+    res.json(rows); // Try sending the rows directly if your client expects a raw array
+  } catch (err) {
+    console.error('Error fetching volunteers:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
