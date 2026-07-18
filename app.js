@@ -32,11 +32,11 @@ const allowedColumns = {
   class: ['id', 'name', 'teacher_id', 'room_id', 'grade_level'],
   room: ['id', 'name', 'event_id', 'class_id', 'period'],
   message: ['id', 'sender_id', 'receiver_id', 'message'],
-  schedule: ['id', 'name', 'decription', 'event_id'],
+  schedule: ['id', 'name', 'decription', 'event_id', 'student_id', 'student_name', 'time', 'period', 'teacher', 'room', 'class_name'],
   user_schedules: ['id', 'user_id', 'user_type', 'file_name', 'file_content'],
   student_class: ['id', 'grade_level', 'user_iduser', 'class_idclass'],
   club: ['id', 'name', 'description'],
-  event: ['id', 'name', 'description'],
+  event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by']
 };
@@ -51,8 +51,16 @@ function buildQuery(table, filters) {
   const where = [];
   const values = [];
 
+  const searchTerm = String(filters?.q || '').trim();
+  if (table === 'schedule' && searchTerm) {
+    const searchColumns = ['student_id', 'student_name', 'time', 'period', 'teacher', 'room', 'class_name'];
+    where.push(`(${searchColumns.map((column) => `${quoteIdentifier(column)} LIKE ?`).join(' OR ')})`);
+    searchColumns.forEach(() => values.push(`%${searchTerm}%`));
+  }
+
   for (const [k, v] of Object.entries(filters || {})) {
     if (v === undefined || v === null || v === '') continue;
+    if (k === 'q') continue;
     if (!cols.includes(k)) continue;
 
     const rawValue = String(v).trim();
@@ -126,6 +134,24 @@ async function ensureColumn(tableName, columnName, columnDefinition) {
   }
 }
 
+async function ensureColumnDefinition(tableName, columnName, columnDefinition) {
+  try {
+    const [rows] = await db.query(
+      'SELECT 1 FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?',
+      [tableName, columnName]
+    );
+
+    if (!rows.length) {
+      await db.query(`ALTER TABLE ${quoteIdentifier(tableName)} ADD COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`);
+      return;
+    }
+
+    await db.query(`ALTER TABLE ${quoteIdentifier(tableName)} MODIFY COLUMN ${quoteIdentifier(columnName)} ${columnDefinition}`);
+  } catch (err) {
+    console.error(`Unable to ensure column definition ${tableName}.${columnName}:`, err.message);
+  }
+}
+
 async function ensureRoomColumns() {
   await ensureColumn('room', 'class_id', 'INT NULL');
   await ensureColumn('room', 'period', 'VARCHAR(45) NULL');
@@ -178,12 +204,19 @@ async function ensureEventTable() {
         \`id\` INT NOT NULL AUTO_INCREMENT,
         \`name\` VARCHAR(255) NOT NULL,
         \`description\` VARCHAR(255) NULL,
+        \`room\` VARCHAR(255) NULL,
+        \`date\` DATETIME NULL,
         PRIMARY KEY (\`id\`)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   } catch (err) {
     console.error('Unable to ensure event table:', err.message);
   }
+}
+
+async function ensureEventColumns() {
+  await ensureColumnDefinition('event', 'date', 'DATETIME NULL');
+  await ensureColumn('event', 'room', 'VARCHAR(255) NULL');
 }
 
 async function ensureAttendanceTable() {
@@ -210,6 +243,19 @@ async function ensureAttendanceTable() {
   }
 }
 
+async function ensureScheduleColumns() {
+  await ensureColumnDefinition('schedule', 'name', 'VARCHAR(45) NULL DEFAULT NULL');
+  await ensureColumnDefinition('schedule', 'decription', 'VARCHAR(255) NULL DEFAULT NULL');
+  await ensureColumnDefinition('schedule', 'event_id', 'INT NULL DEFAULT NULL');
+  await ensureColumn('schedule', 'student_id', 'INT NULL');
+  await ensureColumn('schedule', 'student_name', 'VARCHAR(255) NULL');
+  await ensureColumn('schedule', 'time', 'VARCHAR(45) NULL');
+  await ensureColumn('schedule', 'period', 'VARCHAR(45) NULL');
+  await ensureColumn('schedule', 'teacher', 'VARCHAR(255) NULL');
+  await ensureColumn('schedule', 'room', 'VARCHAR(255) NULL');
+  await ensureColumn('schedule', 'class_name', 'VARCHAR(255) NULL');
+}
+
 function getUserRole(req) {
   return String(req.get('x-user-role') || req.get('x-role') || 'Student').trim();
 }
@@ -224,9 +270,11 @@ function requireAdmin(req, res, next) {
 
 ensureRoomColumns();
 ensureClassColumns();
+ensureScheduleColumns();
 ensureUserSchedulesTable();
 ensureStudentClassTable();
 ensureEventTable();
+ensureEventColumns();
 ensureAttendanceTable();
 
 // Simple CORS middleware for local development
@@ -297,8 +345,18 @@ app.put('/users/:id', requireAdmin, async (req, res) => {
       updates.push('`role_id` = ?');
       values.push(roleRows[0].id);
     } else if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'role_id')) {
+      const roleId = Number(req.body.role_id);
+      if (!Number.isInteger(roleId) || roleId <= 0) {
+        return res.status(400).json({ status: 'error', message: 'Role ID is required' });
+      }
+
+      const [roleRows] = await db.query('SELECT id FROM `role` WHERE id = ? LIMIT 1', [roleId]);
+      if (!roleRows.length) {
+        return res.status(400).json({ status: 'error', message: 'Role not found' });
+      }
+
       updates.push('`role_id` = ?');
-      values.push(Number(req.body.role_id));
+      values.push(roleId);
     }
 
     if (!updates.length) {
@@ -318,13 +376,15 @@ app.post('/events', requireAdmin, async (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
     const description = String(req.body?.description || '').trim();
+    const room = String(req.body?.room || '').trim();
+    const date = String(req.body?.date || '').trim();
 
-    if (!name || !description) {
-      return res.status(400).json({ status: 'error', message: 'Announcement title and message are required' });
+    if (!name || !description || !room || !date) {
+      return res.status(400).json({ status: 'error', message: 'Event name, description, room, and date are required' });
     }
 
-    const [result] = await db.query('INSERT INTO `event` (name, description) VALUES (?, ?)', [name, description]);
-    res.status(201).json({ status: 'ok', message: 'Announcement created successfully', eventId: result.insertId });
+    const [result] = await db.query('INSERT INTO `event` (name, description, room, date) VALUES (?, ?, ?, ?)', [name, description, room, date]);
+    res.status(201).json({ status: 'ok', message: 'Event created successfully', eventId: result.insertId });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -356,6 +416,23 @@ function pickRowValue(row, candidates) {
   return '';
 }
 
+function normalizeScheduleImportRow(row) {
+  const normalizedRow = {};
+  Object.entries(row || {}).forEach(([key, value]) => {
+    normalizedRow[normalizeHeader(key)] = String(value ?? '').trim();
+  });
+
+  return {
+    studentId: pickRowValue(normalizedRow, ['student_id', 'studentid', 'student id']),
+    studentName: pickRowValue(normalizedRow, ['student_name', 'studentname', 'student name']),
+    time: pickRowValue(normalizedRow, ['time', 'schedule_time', 'start_time', 'starttime']),
+    period: pickRowValue(normalizedRow, ['period']),
+    teacher: pickRowValue(normalizedRow, ['teacher', 'teacher_name', 'teachername']),
+    room: pickRowValue(normalizedRow, ['room', 'room_name', 'roomname']),
+    className: pickRowValue(normalizedRow, ['class_name', 'classname', 'class name'])
+  };
+}
+
 function getImportRows(fileBuffer, fileName) {
   const ext = String(fileName || '').toLowerCase();
   const extName = ext.includes('.') ? ext.substring(ext.lastIndexOf('.')) : '';
@@ -385,6 +462,75 @@ function getImportRows(fileBuffer, fileName) {
 
   throw new Error('Unsupported file type. Please upload a CSV or Excel file.');
 }
+
+async function insertScheduleRows(rows, fileName, defaults = {}) {
+  const errors = [];
+  let insertedCount = 0;
+
+  for (const [index, row] of rows.entries()) {
+    const normalizedRow = normalizeScheduleImportRow(row);
+    const hasValues = Object.values(normalizedRow).some((value) => String(value || '').trim() !== '');
+
+    if (!hasValues) {
+      continue;
+    }
+
+    try {
+      const fallbackStudentId = defaults.studentId ?? null;
+      const studentIdValue = normalizedRow.studentId || fallbackStudentId;
+      const numericStudentId = Number(studentIdValue);
+      const studentId = Number.isInteger(numericStudentId) && numericStudentId > 0 ? numericStudentId : null;
+      const studentName = normalizedRow.studentName || defaults.studentName || null;
+      const teacherName = normalizedRow.teacher || defaults.teacher || null;
+      const roomName = normalizedRow.room || defaults.room || null;
+      const className = normalizedRow.className || defaults.className || null;
+
+      await db.query(
+        'INSERT INTO `schedule` (`name`, `decription`, `event_id`, `student_id`, `student_name`, `time`, `period`, `teacher`, `room`, `class_name`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          defaults.name || 'Imported schedule',
+          defaults.description || null,
+          defaults.eventId ?? null,
+          studentId,
+          studentName,
+          normalizedRow.time || null,
+          normalizedRow.period || null,
+          teacherName,
+          roomName,
+          className
+        ]
+      );
+
+      insertedCount += 1;
+    } catch (rowErr) {
+      errors.push({ index: index + 2, message: rowErr.message });
+    }
+  }
+
+  return { insertedCount, errors };
+}
+
+app.post('/schedule/import-file', requireAdmin, async (req, res) => {
+  try {
+    const fileBuffer = decodeUploadBuffer(req.body?.fileBuffer || req.body?.buffer || req.body?.file || req.body);
+    const fileName = String(req.body?.fileName || req.body?.file_name || req.body?.filename || 'import.csv');
+
+    if (!fileBuffer || !fileBuffer.length) {
+      return res.status(400).json({ status: 'error', message: 'A file upload is required' });
+    }
+
+    const rows = getImportRows(fileBuffer, fileName);
+    if (!rows.length) {
+      return res.json({ status: 'ok', insertedCount: 0, errors: [] });
+    }
+    const { insertedCount, errors } = await insertScheduleRows(rows, fileName);
+
+    res.json({ status: 'ok', insertedCount, errors });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 async function resolveRoleId(roleName) {
   const normalizedRoleName = String(roleName || '').trim() || 'Student';
@@ -477,11 +623,42 @@ app.post('/user_schedules', requireAdmin, async (req, res) => {
     const [existingRows] = await db.query('SELECT id FROM `user_schedules` WHERE user_id = ? AND user_type = ? LIMIT 1', [userId, userType]);
     if (existingRows.length) {
       await db.query('UPDATE `user_schedules` SET file_name = ?, file_content = ? WHERE id = ?', [fileName, fileContent, existingRows[0].id]);
-      return res.json({ status: 'ok', message: 'Schedule updated successfully' });
+      const [userRows] = await db.query('SELECT first_name, last_name, email_address FROM `user` WHERE id = ? LIMIT 1', [userId]);
+      const userRecord = userRows[0] || {};
+      const userLabel = `${userRecord.first_name || ''} ${userRecord.last_name || ''}`.trim() || userRecord.email_address || `User ${userId}`;
+      const importResult = await insertScheduleRows(getImportRows(fileContent, fileName), fileName, {
+        name: 'Imported schedule',
+        studentId: userType.toLowerCase() === 'student' ? userId : null,
+        studentName: userType.toLowerCase() === 'student' ? userLabel : null,
+        teacher: userType.toLowerCase() === 'teacher' ? userLabel : null
+      });
+
+      return res.json({
+        status: 'ok',
+        message: 'Schedule updated successfully',
+        importedCount: importResult.insertedCount,
+        errors: importResult.errors
+      });
     }
 
     const [result] = await db.query('INSERT INTO `user_schedules` (user_id, user_type, file_name, file_content) VALUES (?, ?, ?, ?)', [userId, userType, fileName, fileContent]);
-    res.status(201).json({ status: 'ok', message: 'Schedule uploaded successfully', scheduleId: result.insertId });
+    const [userRows] = await db.query('SELECT first_name, last_name, email_address FROM `user` WHERE id = ? LIMIT 1', [userId]);
+    const userRecord = userRows[0] || {};
+    const userLabel = `${userRecord.first_name || ''} ${userRecord.last_name || ''}`.trim() || userRecord.email_address || `User ${userId}`;
+    const importResult = await insertScheduleRows(getImportRows(fileContent, fileName), fileName, {
+      name: 'Imported schedule',
+      studentId: userType.toLowerCase() === 'student' ? userId : null,
+      studentName: userType.toLowerCase() === 'student' ? userLabel : null,
+      teacher: userType.toLowerCase() === 'teacher' ? userLabel : null
+    });
+
+    res.status(201).json({
+      status: 'ok',
+      message: 'Schedule uploaded successfully',
+      scheduleId: result.insertId,
+      importedCount: importResult.insertedCount,
+      errors: importResult.errors
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
@@ -634,13 +811,14 @@ app.post('/rooms', requireAdmin, async (req, res) => {
 app.put('/rooms/:id', requireAdmin, async (req, res) => {
   try {
     const roomId = Number(req.params.id);
+    const hasEventId = Object.prototype.hasOwnProperty.call(req.body || {}, 'event_id');
     const { name, eventId, classId, period } = normalizeRoomPayload(req.body);
 
     if (!roomId || !name) {
       return res.status(400).json({ status: 'error', message: 'Room ID and name are required' });
     }
 
-    const [roomRows] = await db.query('SELECT id FROM `room` WHERE id = ?', [roomId]);
+    const [roomRows] = await db.query('SELECT id, event_id FROM `room` WHERE id = ?', [roomId]);
     if (!roomRows.length) {
       return res.status(404).json({ status: 'error', message: 'Room not found' });
     }
@@ -652,7 +830,8 @@ app.put('/rooms/:id', requireAdmin, async (req, res) => {
       }
     }
 
-    await db.query('UPDATE `room` SET name = ?, event_id = ?, class_id = ?, period = ? WHERE id = ?', [name, eventId, classId, period || null, roomId]);
+    const nextEventId = hasEventId && eventId !== null ? eventId : roomRows[0].event_id;
+    await db.query('UPDATE `room` SET name = ?, event_id = ?, class_id = ?, period = ? WHERE id = ?', [name, nextEventId, classId, period || null, roomId]);
     res.json({ status: 'ok', message: 'Room updated successfully' });
   } catch (err) {
     console.error(err);

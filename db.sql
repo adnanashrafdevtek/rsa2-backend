@@ -87,9 +87,16 @@ DEFAULT CHARACTER SET = utf8;
 
 CREATE TABLE IF NOT EXISTS `mydb`.`schedule` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
-  `name` VARCHAR(45) NOT NULL,
+  `name` VARCHAR(45) NULL DEFAULT NULL,
   `decription` VARCHAR(255) NULL DEFAULT NULL,
-  `event_id` INT(11) NOT NULL,
+  `event_id` INT(11) NULL DEFAULT NULL,
+  `student_id` INT(11) NULL DEFAULT NULL,
+  `student_name` VARCHAR(255) NULL DEFAULT NULL,
+  `time` VARCHAR(45) NULL DEFAULT NULL,
+  `period` VARCHAR(45) NULL DEFAULT NULL,
+  `teacher` VARCHAR(255) NULL DEFAULT NULL,
+  `room` VARCHAR(255) NULL DEFAULT NULL,
+  `class_name` VARCHAR(255) NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   INDEX `fk_schedule_event_idx` (`event_id` ASC) ,
   CONSTRAINT `fk_schedule_event`
@@ -133,6 +140,8 @@ CREATE TABLE IF NOT EXISTS `mydb`.`event` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `description` VARCHAR(45) NULL DEFAULT NULL,
+  `room` VARCHAR(255) NULL DEFAULT NULL,
+  `date` DATETIME NULL DEFAULT NULL,
   PRIMARY KEY (`id`))
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
@@ -167,8 +176,8 @@ INSERT INTO `mydb`.`role` (`name`) VALUES ('Admin');
 INSERT INTO `mydb`.`role` (`name`) VALUES ('Student');
 INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Ali', 'Ashraf', 'aashraf@gmail.com', '2');
 INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Omar', 'ahmed', 'oahmed@gmail.com', '3');
-INSERT INTO `mydb`.`event` (`name`, `description`) VALUES ('Orientation', 'Welcome and info session');
-INSERT INTO `mydb`.`event` (`name`, `description`) VALUES ('Science Fair', 'Student science projects');
+INSERT INTO `mydb`.`event` (`name`, `description`, `room`, `date`) VALUES ('Orientation', 'Welcome and info session', 'Auditorium', '2026-07-05 12:30:00');
+INSERT INTO `mydb`.`event` (`name`, `description`, `room`, `date`) VALUES ('Science Fair', 'Student science projects', 'Lab 1', '2026-07-15 09:00:00');
 
 INSERT INTO `mydb`.`room` (`name`, `event_id`) VALUES ('Auditorium', 1);
 INSERT INTO `mydb`.`room` (`name`, `event_id`) VALUES ('Lab 1', 2);
