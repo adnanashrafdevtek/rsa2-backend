@@ -162,8 +162,34 @@ CREATE TABLE IF NOT EXISTS `mydb`.`club_has_event` (
     REFERENCES `mydb`.`event` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
+  
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
+CREATE TABLE IF NOT EXISTS `volunteers` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `first_name` VARCHAR(100) NOT NULL,
+  `last_name` VARCHAR(100) NOT NULL,
+  `email_address` VARCHAR(255) NOT NULL,
+  `status` VARCHAR(50) DEFAULT 'active',
+  PRIMARY KEY (`id`)
+);
+CREATE TABLE IF NOT EXISTS `reviews` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `user_id` INT NOT NULL,
+  `rating` INT NOT NULL,
+  `comment` TEXT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+);
+
+CREATE TABLE IF NOT EXISTS `announcements` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `title` VARCHAR(255) NOT NULL,
+  `content` TEXT NOT NULL,
+  `created_by` INT,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+);
 
 
 SET SQL_MODE=@OLD_SQL_MODE;
@@ -198,7 +224,17 @@ INSERT INTO `mydb`.`message` (`sender_id`, `receiver_id`, `message`) VALUES (2, 
 
 INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Orientation Morning', 'For new students', 1);
 INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Science Fair Day', 'Bring projects', 2);
+INSERT INTO `reviews` (`user_id`, `rating`, `comment`) VALUES
+(1, 5, 'Great system and very easy to use!'),
+(2, 4, 'Helpful, though a few features could be faster.');
 
+INSERT INTO `announcements` (`title`, `content`, `created_by`) VALUES
+('Welcome to the New Term', 'Please make sure all attendance records are updated weekly.', 1),
+('System Maintenance', 'Scheduled downtime this coming Saturday at midnight.', 1);
+INSERT INTO `volunteers` (`first_name`, `last_name`, `email_address`, `status`) VALUES
+('Jane', 'Doe', 'jane.doe@example.com', 'active'),
+('John', 'Smith', 'john.smith@example.com', 'active'),
+('Alice', 'Johnson', 'alice.j@example.com', 'inactive');
 ALTER TABLE `mydb`.`user` 
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
 update `mydb`.`user` set password="test";

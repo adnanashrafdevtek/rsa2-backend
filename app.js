@@ -38,7 +38,10 @@ const allowedColumns = {
   club: ['id', 'name', 'description'],
   event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
-  attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by']
+  attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
+  volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status'],
+  reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
+  announcements: ['id', 'title', 'content', 'created_by', 'created_at'] // Add this line
 };
 
 function quoteIdentifier(identifier) {
@@ -674,6 +677,9 @@ registerTableRoutes({ collectionPath: '/schedules', table: 'schedule', aliases: 
 registerTableRoutes({ collectionPath: '/student_classes', table: 'student_class', aliases: ['/student_class'] });
 registerTableRoutes({ collectionPath: '/clubs', table: 'club', aliases: ['/club'] });
 registerTableRoutes({ collectionPath: '/events', table: 'event', aliases: ['/event'] });
+registerTableRoutes({ collectionPath: '/volunteers', table: 'volunteers', aliases: ['/volunteer', '/api/volunteers'] });
+registerTableRoutes({ collectionPath: '/reviews', table: 'reviews', aliases: ['/review', '/api/reviews'] });
+registerTableRoutes({ collectionPath: '/announcements', table: 'announcements', aliases: ['/announcement', '/api/announcements'] });
 
 app.get('/club_has_event', async (req, res) => {
   try {
@@ -1071,6 +1077,58 @@ app.get('/volunteers', async (req, res) => {
     res.json(rows); // Try sending the rows directly if your client expects a raw array
   } catch (err) {
     console.error('Error fetching volunteers:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+app.get('/api/class-students', (req, res) => {
+  const classId = req.query.class_id;
+  const query = `
+    SELECT sc.*, u.first_name, u.last_name 
+    FROM student_class sc
+    JOIN user u ON sc.user_iduser = u.id
+    WHERE sc.class_idclass = ?
+  `;
+  
+  db.query(query, [classId], (err, results) => {
+    if (err) {
+      console.error('Error fetching class students:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ mysqlResult: results });
+  });
+});
+app.get('/student_class', (req, res) => {
+  const classId = req.query.class_idclass;
+  const query = `
+    SELECT sc.*, u.first_name, u.last_name 
+    FROM student_class sc
+    JOIN user u ON sc.user_iduser = u.id
+    WHERE sc.class_idclass = ?
+  `;
+  db.query(query, [classId], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ mysqlResult: results });
+  });
+});
+// Custom endpoint for fetching classes with optional teacher filter
+app.get('/classes', async (req, res) => {
+  try {
+    const teacherId = req.query.teacher_id ? Number(req.query.teacher_id) : null;
+    let query = 'SELECT * FROM `class`';
+    let values = [];
+
+    if (teacherId) {
+      query += ' WHERE teacher_id = ?';
+      values.push(teacherId);
+    }
+
+    const [rows] = await db.query(query, values);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
