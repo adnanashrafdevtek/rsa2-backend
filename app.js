@@ -1,5 +1,15 @@
 // src/app.js
  require('dotenv').config();
+ const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+  host: "sandbox.smtp.mailtrap.io",
+  port: 2525,
+  auth: {
+    user: "YOUR_MAILTRAP_USERNAME",
+    pass: "YOUR_MAILTRAP_PASSWORD"
+  }
+});
 const express = require('express');
 const app = express();
 const dbName="mydb2";
@@ -28,7 +38,10 @@ const allowedColumns = {
   club: ['id', 'name', 'description'],
   event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
-  attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by']
+  attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
+  volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status'],
+  reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
+  announcements: ['id', 'title', 'content', 'created_by', 'created_at'] // Add this line
 };
 
 function quoteIdentifier(identifier) {
@@ -664,6 +677,9 @@ registerTableRoutes({ collectionPath: '/schedules', table: 'schedule', aliases: 
 registerTableRoutes({ collectionPath: '/student_classes', table: 'student_class', aliases: ['/student_class'] });
 registerTableRoutes({ collectionPath: '/clubs', table: 'club', aliases: ['/club'] });
 registerTableRoutes({ collectionPath: '/events', table: 'event', aliases: ['/event'] });
+registerTableRoutes({ collectionPath: '/volunteers', table: 'volunteers', aliases: ['/volunteer', '/api/volunteers'] });
+registerTableRoutes({ collectionPath: '/reviews', table: 'reviews', aliases: ['/review', '/api/reviews'] });
+registerTableRoutes({ collectionPath: '/announcements', table: 'announcements', aliases: ['/announcement', '/api/announcements'] });
 
 app.get('/club_has_event', async (req, res) => {
   try {
@@ -1011,7 +1027,111 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Server error' });
   }
 });
+app.post('/api/request-reset', async (req, res) => {
+  const { email } = req.body;
+  const token = Math.floor(100000 + Math.random() * 900000).toString();
 
+  try {
+    // 1. Save token to DB
+    const [result] = await db.query('UPDATE `user` SET `reset_token` = ? WHERE `email_address` = ?', [token, email]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    // 2. Log to console
+    console.log(`Reset Token for ${email}: ${token}`);
+    
+    // 3. Attempt to send email, but don't crash if it fails
+    try {
+      await transporter.sendMail({
+        from: '"System" <no-reply@yourdomain.com>',
+        to: email,
+        subject: "Password Reset Token",
+        text: `Your token is: ${token}`
+      });
+    } catch (emailErr) {
+      console.error("Mailtrap connection failed, check your credentials:", emailErr.message);
+    }
+
+    // Always respond with success if the token was generated
+    res.json({ status: 'ok', message: 'Token generated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: 'Database error' });
+  }
+});
+app.get('/api/volunteers', async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT * FROM volunteers');
+    res.json({ mysqlResult: rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+// Add this block to your app.js
+app.get('/volunteers', async (req, res) => {
+  try {
+    // Ensure 'volunteers' matches your actual database table name exactly
+    const [rows] = await db.query('SELECT * FROM volunteers'); 
+    res.json(rows); // Try sending the rows directly if your client expects a raw array
+  } catch (err) {
+    console.error('Error fetching volunteers:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+app.get('/api/class-students', (req, res) => {
+  const classId = req.query.class_id;
+  const query = `
+    SELECT sc.*, u.first_name, u.last_name 
+    FROM student_class sc
+    JOIN user u ON sc.user_iduser = u.id
+    WHERE sc.class_idclass = ?
+  `;
+  
+  db.query(query, [classId], (err, results) => {
+    if (err) {
+      console.error('Error fetching class students:', err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ mysqlResult: results });
+  });
+});
+app.get('/student_class', (req, res) => {
+  const classId = req.query.class_idclass;
+  const query = `
+    SELECT sc.*, u.first_name, u.last_name 
+    FROM student_class sc
+    JOIN user u ON sc.user_iduser = u.id
+    WHERE sc.class_idclass = ?
+  `;
+  db.query(query, [classId], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ mysqlResult: results });
+  });
+});
+// Custom endpoint for fetching classes with optional teacher filter
+app.get('/classes', async (req, res) => {
+  try {
+    const teacherId = req.query.teacher_id ? Number(req.query.teacher_id) : null;
+    let query = 'SELECT * FROM `class`';
+    let values = [];
+
+    if (teacherId) {
+      query += ' WHERE teacher_id = ?';
+      values.push(teacherId);
+    }
+
+    const [rows] = await db.query(query, values);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
