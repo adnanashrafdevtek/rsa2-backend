@@ -39,8 +39,7 @@ const allowedColumns = {
   event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
-  volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status'],
-  reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
+  volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status', 'check_in', 'check_out', 'total_hours', 'assigned_class_id', 'assigned_teacher_id'],    reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
   announcements: ['id', 'title', 'content', 'created_by', 'created_at'] // Add this line
 };
 
@@ -1127,6 +1126,100 @@ app.get('/classes', async (req, res) => {
 
     const [rows] = await db.query(query, values);
     res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+app.post('/volunteerHours/check-in', async (req, res) => {
+  try {
+    const studentId = Number(req.body?.student_id);
+    if (!studentId) {
+      return res.status(400).json({ status: 'error', message: 'student_id is required' });
+    }
+
+    const [rows] = await db.query('SELECT status, check_in, check_out, total_hours FROM `volunteers` WHERE id = ?', [studentId]);
+    if (!rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
+    }
+
+    const { status: currentStatus, check_in, check_out, total_hours: existingHours } = rows[0];
+
+    // Teacher confirms the volunteer has arrived
+    if (currentStatus === 'requesting_confirmation') {
+      await db.query(
+        "UPDATE `volunteers` SET `status` = 'checked_in', `check_in` = NOW(), `check_out` = NULL WHERE id = ?",
+        [studentId]
+      );
+      return res.json({ status: 'ok', message: 'Checked in successfully' });
+    }
+
+    // Admin confirms the volunteer has returned -> finalize hours
+    if (currentStatus === 'returning_confirmation') {
+      let hoursWorked = 0;
+      if (check_in && check_out) {
+        const diffMs = new Date(check_out) - new Date(check_in);
+        hoursWorked = diffMs / (1000 * 60 * 60);
+      }
+      const newTotal = (Number(existingHours) || 0) + hoursWorked;
+
+      await db.query(
+        "UPDATE `volunteers` SET `status` = 'available', `total_hours` = ?, `check_in` = NULL, `check_out` = NULL, `assigned_class_id` = NULL, `assigned_teacher_id` = NULL WHERE id = ?",
+        [newTotal.toFixed(2), studentId]
+      );
+      return res.json({ status: 'ok', message: 'Return confirmed', hoursAdded: hoursWorked.toFixed(2) });
+    }
+
+    return res.status(400).json({ status: 'error', message: `Cannot check in from status "${currentStatus}"` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/volunteerHours/check-out', async (req, res) => {
+  try {
+    const studentId = Number(req.body?.student_id);
+    if (!studentId) {
+      return res.status(400).json({ status: 'error', message: 'student_id is required' });
+    }
+
+    const [rows] = await db.query('SELECT status FROM `volunteers` WHERE id = ?', [studentId]);
+    if (!rows.length) {
+      return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
+    }
+
+    const currentStatus = rows[0].status;
+
+    // Admin sends the volunteer to a specific class
+    if (currentStatus === 'available' || currentStatus === null || currentStatus === '') {
+      const classId = Number(req.body?.class_id);
+      if (!classId) {
+        return res.status(400).json({ status: 'error', message: 'class_id is required to send a volunteer to a class' });
+      }
+
+      const [classRows] = await db.query('SELECT id, teacher_id FROM `class` WHERE id = ?', [classId]);
+      if (!classRows.length) {
+        return res.status(400).json({ status: 'error', message: 'Class not found' });
+      }
+
+      await db.query(
+        "UPDATE `volunteers` SET `status` = 'requesting_confirmation', `assigned_class_id` = ?, `assigned_teacher_id` = ? WHERE id = ?",
+        [classId, classRows[0].teacher_id, studentId]
+      );
+      return res.json({ status: 'ok', message: 'Requesting teacher confirmation' });
+    }
+
+    // Teacher releases the volunteer back to admin
+    if (currentStatus === 'checked_in') {
+      await db.query(
+        "UPDATE `volunteers` SET `status` = 'returning_confirmation', `check_out` = NOW() WHERE id = ?",
+        [studentId]
+      );
+      return res.json({ status: 'ok', message: 'Requesting admin confirmation' });
+    }
+
+    return res.status(400).json({ status: 'error', message: `Cannot check out from status "${currentStatus}"` });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
