@@ -39,14 +39,9 @@ const allowedColumns = {
   event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
-<<<<<<< HEAD
   volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status'],
   reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
   announcements: ['id', 'title', 'content', 'created_by', 'created_at', 'target_all', 'target_teacher_ids']
-=======
-  volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status', 'check_in', 'check_out', 'total_hours', 'assigned_class_id', 'assigned_teacher_id'],    reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
-  announcements: ['id', 'title', 'content', 'created_by', 'created_at'] // Add this line
->>>>>>> 52286193094c79e5440a2a0f1f4dced14809ce53
 };
 
 function quoteIdentifier(identifier) {
