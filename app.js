@@ -15,7 +15,7 @@ const app = express();
 const dbName="mydb2";
 const username="admin";
 const db = require('./db');
-const { normalizeRoomPayload, resolveRoomEventId } = require('./roomPayload');
+const { resolveRoomEventId } = require('./roomPayload');
 const { parseImportRows, normalizeHeader } = require('./importUsers');
 
 let XLSX;
@@ -29,7 +29,7 @@ try {
 const allowedColumns = {
   role: ['id', 'name'],
   user: ['id', 'first_name', 'last_name', 'email_address', 'role_id'],
-  class: ['id', 'name', 'teacher_id', 'room_id', 'grade_level'],
+  class: ['id', 'name', 'teacher_id', 'room_id', 'room', 'period', 'time', 'grade_level'],
   room: ['id', 'name', 'event_id', 'class_id', 'period'],
   message: ['id', 'sender_id', 'receiver_id', 'message'],
   schedule: ['id', 'name', 'decription', 'event_id', 'student_id', 'student_name', 'time', 'period', 'teacher', 'room', 'class_name'],
@@ -41,7 +41,7 @@ const allowedColumns = {
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
   volunteers: ['id', 'first_name', 'last_name', 'email_address', 'status'],
   reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
-  announcements: ['id', 'title', 'content', 'created_by', 'created_at'] // Add this line
+  announcements: ['id', 'title', 'content', 'created_by', 'created_at', 'target_all', 'target_teacher_ids']
 };
 
 function quoteIdentifier(identifier) {
@@ -161,6 +161,10 @@ async function ensureRoomColumns() {
 }
 
 async function ensureClassColumns() {
+  await ensureColumnDefinition('class', 'room_id', 'INT NULL');
+  await ensureColumn('class', 'room', 'VARCHAR(255) NULL');
+  await ensureColumn('class', 'period', 'VARCHAR(45) NULL');
+  await ensureColumn('class', 'time', 'VARCHAR(45) NULL');
   await ensureColumn('class', 'grade_level', 'VARCHAR(45) NULL');
 }
 
@@ -222,6 +226,30 @@ async function ensureEventColumns() {
   await ensureColumn('event', 'room', 'VARCHAR(255) NULL');
 }
 
+async function ensureAnnouncementTable() {
+  try {
+    await db.query(
+      'CREATE TABLE IF NOT EXISTS `announcements` (' +
+      ' `id` INT NOT NULL AUTO_INCREMENT,' +
+      ' `title` VARCHAR(255) NOT NULL,' +
+      ' `content` TEXT NOT NULL,' +
+      ' `created_by` INT NULL,' +
+      ' `created_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,' +
+      ' `target_all` TINYINT(1) NOT NULL DEFAULT 0,' +
+      ' `target_teacher_ids` TEXT NULL,' +
+      ' PRIMARY KEY (`id`)' +
+      ' ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
+    );
+  } catch (err) {
+    console.error('Unable to ensure announcements table:', err.message);
+  }
+}
+
+async function ensureAnnouncementColumns() {
+  await ensureColumn('announcements', 'target_all', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('announcements', 'target_teacher_ids', 'TEXT NULL');
+}
+
 async function ensureAttendanceTable() {
   try {
     await db.query(`
@@ -271,6 +299,20 @@ function requireAdmin(req, res, next) {
   return res.status(403).json({ status: 'error', message: 'Admin access required' });
 }
 
+async function createLinkedRoom(roomName, period) {
+  const roomEventId = await resolveRoomEventId({
+    roomName,
+    eventId: null,
+    createEvent: async ({ name, description }) => {
+      const [result] = await db.query('INSERT INTO `event` (`name`, `description`) VALUES (?, ?)', [name, description]);
+      return result;
+    }
+  });
+
+  const [result] = await db.query('INSERT INTO `room` (`name`, `event_id`, `class_id`, `period`) VALUES (?, ?, NULL, ?)', [roomName, roomEventId, period || null]);
+  return result.insertId;
+}
+
 ensureRoomColumns();
 ensureClassColumns();
 ensureScheduleColumns();
@@ -278,6 +320,8 @@ ensureUserSchedulesTable();
 ensureStudentClassTable();
 ensureEventTable();
 ensureEventColumns();
+ensureAnnouncementTable();
+ensureAnnouncementColumns();
 ensureAttendanceTable();
 
 // Simple CORS middleware for local development
@@ -671,7 +715,6 @@ app.post('/user_schedules', requireAdmin, async (req, res) => {
 registerTableRoutes({ collectionPath: '/roles', table: 'role' });
 registerTableRoutes({ collectionPath: '/users', table: 'user', aliases: ['/user'] });
 registerTableRoutes({ collectionPath: '/classes', table: 'class', aliases: ['/class'] });
-registerTableRoutes({ collectionPath: '/rooms', table: 'room', aliases: ['/room'] });
 registerTableRoutes({ collectionPath: '/messages', table: 'message', aliases: ['/message'] });
 registerTableRoutes({ collectionPath: '/schedules', table: 'schedule', aliases: ['/schedule'] });
 registerTableRoutes({ collectionPath: '/student_classes', table: 'student_class', aliases: ['/student_class'] });
@@ -680,6 +723,68 @@ registerTableRoutes({ collectionPath: '/events', table: 'event', aliases: ['/eve
 registerTableRoutes({ collectionPath: '/volunteers', table: 'volunteers', aliases: ['/volunteer', '/api/volunteers'] });
 registerTableRoutes({ collectionPath: '/reviews', table: 'reviews', aliases: ['/review', '/api/reviews'] });
 registerTableRoutes({ collectionPath: '/announcements', table: 'announcements', aliases: ['/announcement', '/api/announcements'] });
+
+function normalizeTeacherIdList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => Number(String(item).trim()))
+    .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+app.post('/announcements', requireAdmin, async (req, res) => {
+  try {
+    const title = String(req.body?.title || '').trim();
+    const content = String(req.body?.content || '').trim();
+    const createdBy = req.body?.created_by !== undefined && req.body?.created_by !== null && String(req.body?.created_by).trim() !== ''
+      ? Number(req.body.created_by)
+      : null;
+    const targetAll = Number(req.body?.target_all) === 1 || req.body?.target_all === true;
+    const teacherIds = Array.isArray(req.body?.teacher_ids)
+      ? req.body.teacher_ids.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0)
+      : normalizeTeacherIdList(req.body?.teacher_ids);
+
+    if (!title || !content) {
+      return res.status(400).json({ status: 'error', message: 'Title and content are required' });
+    }
+
+    if (!targetAll && teacherIds.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'Select at least one teacher or send to all teachers' });
+    }
+
+    const targetTeacherIds = targetAll ? null : teacherIds.join(',');
+    const [result] = await db.query(
+      'INSERT INTO `announcements` (`title`, `content`, `created_by`, `target_all`, `target_teacher_ids`) VALUES (?, ?, ?, ?, ?)',
+      [title, content, createdBy, targetAll ? 1 : 0, targetTeacherIds]
+    );
+
+    res.status(201).json({ status: 'ok', message: 'Announcement created successfully', announcementId: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.get('/teacher_announcements', async (req, res) => {
+  try {
+    const teacherId = Number(req.query?.teacher_id);
+    if (!teacherId) {
+      return res.status(400).json({ status: 'error', message: 'Teacher ID is required' });
+    }
+
+    const [rows] = await db.query(
+      'SELECT * FROM `announcements` ' +
+      'WHERE `target_all` = 1 ' +
+      'OR FIND_IN_SET(?, COALESCE(`target_teacher_ids`, \'\')) ' +
+      'ORDER BY `created_at` DESC, `id` DESC',
+      [teacherId]
+    );
+
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 app.get('/club_has_event', async (req, res) => {
   try {
@@ -694,14 +799,16 @@ app.post('/classes', requireAdmin, async (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
     const teacherId = Number(req.body?.teacher_id);
-    const roomId = Number(req.body?.room_id);
+    const room = String(req.body?.room || '').trim();
+    const period = String(req.body?.period || '').trim();
+    const time = String(req.body?.time || '').trim();
     const studentIds = Array.isArray(req.body?.student_ids)
       ? req.body.student_ids
       : String(req.body?.student_ids || '').split(',').map((value) => Number(value.trim())).filter(Boolean);
     const gradeLevel = String(req.body?.grade_level || '').trim() || null;
 
-    if (!name || !teacherId || !roomId) {
-      return res.status(400).json({ status: 'error', message: 'Class name, teacher ID, and room ID are required' });
+    if (!name || !teacherId || !room || !period || !time) {
+      return res.status(400).json({ status: 'error', message: 'Class name, teacher ID, room, period, and time are required' });
     }
 
     const [teacherRows] = await db.query('SELECT id FROM `user` WHERE id = ?', [teacherId]);
@@ -709,13 +816,11 @@ app.post('/classes', requireAdmin, async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Teacher not found' });
     }
 
-    const [roomRows] = await db.query('SELECT id FROM `room` WHERE id = ?', [roomId]);
-    if (!roomRows.length) {
-      return res.status(400).json({ status: 'error', message: 'Room not found' });
-    }
-
-    const [classResult] = await db.query('INSERT INTO `class` (name, teacher_id, room_id, grade_level) VALUES (?, ?, ?, ?)', [name, teacherId, roomId, gradeLevel]);
+    const roomId = await createLinkedRoom(room, period);
+    const [classResult] = await db.query('INSERT INTO `class` (name, teacher_id, room_id, room, period, time, grade_level) VALUES (?, ?, ?, ?, ?, ?, ?)', [name, teacherId, roomId, room, period, time, gradeLevel]);
     const classId = classResult.insertId;
+
+    await db.query('UPDATE `room` SET class_id = ? WHERE id = ?', [classId, roomId]);
 
     for (const studentId of studentIds) {
       const [studentRows] = await db.query('SELECT id FROM `user` WHERE id = ?', [studentId]);
@@ -738,11 +843,16 @@ app.put('/classes/:id', requireAdmin, async (req, res) => {
     const classId = Number(req.params.id);
     const name = String(req.body?.name || '').trim();
     const teacherId = Number(req.body?.teacher_id);
-    const roomId = Number(req.body?.room_id);
+    const room = String(req.body?.room || '').trim();
+    const period = String(req.body?.period || '').trim();
+    const time = String(req.body?.time || '').trim();
+    const roomId = req.body?.room_id !== undefined && req.body?.room_id !== null && String(req.body?.room_id).trim() !== ''
+      ? Number(req.body.room_id)
+      : null;
     const gradeLevel = String(req.body?.grade_level || '').trim() || null;
 
-    if (!classId || !name || !teacherId || !roomId) {
-      return res.status(400).json({ status: 'error', message: 'Class ID, name, teacher ID, and room ID are required' });
+    if (!classId || !name || !teacherId || !room || !period || !time) {
+      return res.status(400).json({ status: 'error', message: 'Class ID, name, teacher ID, room, period, and time are required' });
     }
 
     const [classRows] = await db.query('SELECT id FROM `class` WHERE id = ?', [classId]);
@@ -750,7 +860,18 @@ app.put('/classes/:id', requireAdmin, async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Class not found' });
     }
 
-    await db.query('UPDATE `class` SET name = ?, teacher_id = ?, room_id = ?, grade_level = ? WHERE id = ?', [name, teacherId, roomId, gradeLevel, classId]);
+    const [currentClassRows] = await db.query('SELECT room_id FROM `class` WHERE id = ?', [classId]);
+    const existingRoomId = currentClassRows[0]?.room_id || null;
+
+    if (existingRoomId) {
+      await db.query('UPDATE `room` SET name = ?, period = ?, class_id = ? WHERE id = ?', [room, period, classId, existingRoomId]);
+      await db.query('UPDATE `class` SET name = ?, teacher_id = ?, room = ?, period = ?, time = ?, grade_level = ? WHERE id = ?', [name, teacherId, room, period, time, gradeLevel, classId]);
+    } else {
+      const newRoomId = await createLinkedRoom(room, period);
+      await db.query('UPDATE `class` SET name = ?, teacher_id = ?, room_id = ?, room = ?, period = ?, time = ?, grade_level = ? WHERE id = ?', [name, teacherId, newRoomId, room, period, time, gradeLevel, classId]);
+      await db.query('UPDATE `room` SET class_id = ? WHERE id = ?', [classId, newRoomId]);
+    }
+
     res.json({ status: 'ok', message: 'Class updated successfully' });
   } catch (err) {
     console.error(err);
@@ -765,95 +886,15 @@ app.delete('/classes/:id', requireAdmin, async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Class ID is required' });
     }
 
+    const [classRows] = await db.query('SELECT room_id FROM `class` WHERE id = ?', [classId]);
+    const roomId = classRows[0]?.room_id || null;
+    if (roomId) {
+      await db.query('UPDATE `room` SET class_id = NULL WHERE id = ?', [roomId]);
+    }
+
     await db.query('DELETE FROM `student_class` WHERE class_idclass = ?', [classId]);
     await db.query('DELETE FROM `class` WHERE id = ?', [classId]);
     res.json({ status: 'ok', message: 'Class deleted successfully' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
-
-app.post('/rooms', requireAdmin, async (req, res) => {
-  try {
-    let { name, eventId, classId, period } = normalizeRoomPayload(req.body);
-
-    if (!name) {
-      return res.status(400).json({ status: 'error', message: 'Room name is required' });
-    }
-
-    if (eventId !== null) {
-      const [eventRows] = await db.query('SELECT id FROM `event` WHERE id = ?', [eventId]);
-      if (!eventRows.length) {
-        return res.status(400).json({ status: 'error', message: 'Event not found' });
-      }
-    } else {
-      const resolvedEventId = await resolveRoomEventId({
-        roomName: name,
-        eventId,
-        createEvent: async ({ name: eventName, description }) => {
-          const [result] = await db.query('INSERT INTO `event` (name, description) VALUES (?, ?)', [eventName, description]);
-          return result;
-        }
-      });
-      eventId = resolvedEventId;
-    }
-
-    if (classId) {
-      const [classRows] = await db.query('SELECT id FROM `class` WHERE id = ?', [classId]);
-      if (!classRows.length) {
-        return res.status(400).json({ status: 'error', message: 'Class not found' });
-      }
-    }
-
-    const [result] = await db.query('INSERT INTO `room` (name, event_id, class_id, period) VALUES (?, ?, ?, ?)', [name, eventId, classId, period || null]);
-    res.status(201).json({ status: 'ok', message: 'Room created successfully', roomId: result.insertId });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
-
-app.put('/rooms/:id', requireAdmin, async (req, res) => {
-  try {
-    const roomId = Number(req.params.id);
-    const hasEventId = Object.prototype.hasOwnProperty.call(req.body || {}, 'event_id');
-    const { name, eventId, classId, period } = normalizeRoomPayload(req.body);
-
-    if (!roomId || !name) {
-      return res.status(400).json({ status: 'error', message: 'Room ID and name are required' });
-    }
-
-    const [roomRows] = await db.query('SELECT id, event_id FROM `room` WHERE id = ?', [roomId]);
-    if (!roomRows.length) {
-      return res.status(404).json({ status: 'error', message: 'Room not found' });
-    }
-
-    if (eventId !== null) {
-      const [eventRows] = await db.query('SELECT id FROM `event` WHERE id = ?', [eventId]);
-      if (!eventRows.length) {
-        return res.status(400).json({ status: 'error', message: 'Event not found' });
-      }
-    }
-
-    const nextEventId = hasEventId && eventId !== null ? eventId : roomRows[0].event_id;
-    await db.query('UPDATE `room` SET name = ?, event_id = ?, class_id = ?, period = ? WHERE id = ?', [name, nextEventId, classId, period || null, roomId]);
-    res.json({ status: 'ok', message: 'Room updated successfully' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
-
-app.delete('/rooms/:id', requireAdmin, async (req, res) => {
-  try {
-    const roomId = Number(req.params.id);
-    if (!roomId) {
-      return res.status(400).json({ status: 'error', message: 'Room ID is required' });
-    }
-
-    await db.query('DELETE FROM `room` WHERE id = ?', [roomId]);
-    res.json({ status: 'ok', message: 'Room deleted successfully' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
