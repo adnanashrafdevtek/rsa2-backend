@@ -1267,6 +1267,17 @@ app.post('/volunteerHours/check-out', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+app.post('/reviews', async (req, res) => {
+  const { user_id, rating, comment } = req.body;
+  try {
+    const query = 'INSERT INTO reviews (user_id, rating, comment) VALUES (?, ?, ?)';
+    const result = await db.execute(query, [user_id, rating, comment]);
+    res.status(201).json({ success: true, result });
+  } catch (err) {
+    console.error('Error inserting review:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
