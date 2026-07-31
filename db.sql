@@ -190,8 +190,39 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 );
-
-
+CREATE TABLE volunteerHours (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    class_id INT NOT NULL,
+    check_in DATETIME DEFAULT NULL,
+    check_out DATETIME DEFAULT NULL,
+    hours DECIMAL(10, 2) DEFAULT 0.00,
+    total_hours DECIMAL(10, 2) DEFAULT 0.00,
+    FOREIGN KEY (student_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES class(id) ON DELETE CASCADE
+);
+CREATE TABLE volunteer (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_id INT NOT NULL,
+    class_id INT NOT NULL,
+    check_in DATETIME DEFAULT NULL,
+    check_out DATETIME DEFAULT NULL,
+    hours DECIMAL(10, 2) DEFAULT 0.00,
+    total_hours DECIMAL(10, 2) DEFAULT 0.00,
+    FOREIGN KEY (student_id) REFERENCES user(id) ON DELETE CASCADE,
+    FOREIGN KEY (class_id) REFERENCES class(id) ON DELETE CASCADE
+);
+RENAME TABLE volunteer TO volunteerHours;
+ALTER TABLE volunteers 
+  ADD COLUMN check_in DATETIME NULL,
+  ADD COLUMN check_out DATETIME NULL,
+  ADD COLUMN total_hours DECIMAL(6,2) NOT NULL DEFAULT 0.00,
+  MODIFY COLUMN status VARCHAR(45) NOT NULL DEFAULT 'available';
+  SELECT id, first_name, last_name, status FROM volunteers;
+  UPDATE volunteers SET status = 'available' WHERE status NOT IN ('requesting_confirmation', 'checked_in', 'returning_confirmation');
+  ALTER TABLE volunteers
+  ADD COLUMN assigned_class_id INT NULL,
+  ADD COLUMN assigned_teacher_id INT NULL;
 SET SQL_MODE=@OLD_SQL_MODE;
 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
@@ -238,3 +269,4 @@ INSERT INTO `volunteers` (`first_name`, `last_name`, `email_address`, `status`) 
 ALTER TABLE `mydb`.`user` 
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
 update `mydb`.`user` set password="test";
+UPDATE `mydb`.`user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2');
