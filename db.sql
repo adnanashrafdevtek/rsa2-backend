@@ -190,39 +190,77 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 );
-CREATE TABLE volunteerHours (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    student_id INT NOT NULL,
-    class_id INT NOT NULL,
-    check_in DATETIME DEFAULT NULL,
-    check_out DATETIME DEFAULT NULL,
-    hours DECIMAL(10, 2) DEFAULT 0.00,
-    total_hours DECIMAL(10, 2) DEFAULT 0.00,
-    FOREIGN KEY (student_id) REFERENCES user(id) ON DELETE CASCADE,
-    FOREIGN KEY (class_id) REFERENCES class(id) ON DELETE CASCADE
+CREATE TABLE volunteer_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  teacher_id INT NOT NULL,
+  student_id INT NOT NULL,
+  class_id INT DEFAULT NULL,
+  message TEXT DEFAULT NULL,
+  status VARCHAR(45) NOT NULL DEFAULT 'pending',
+  approved TINYINT(1) NOT NULL DEFAULT 0,
+  approved_by INT DEFAULT NULL,
+  approved_at DATETIME DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_volunteer_requests_teacher (teacher_id),
+  INDEX idx_volunteer_requests_student (student_id),
+  INDEX idx_volunteer_requests_class (class_id)
 );
-CREATE TABLE volunteer (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    student_id INT NOT NULL,
-    class_id INT NOT NULL,
-    check_in DATETIME DEFAULT NULL,
-    check_out DATETIME DEFAULT NULL,
-    hours DECIMAL(10, 2) DEFAULT 0.00,
-    total_hours DECIMAL(10, 2) DEFAULT 0.00,
-    FOREIGN KEY (student_id) REFERENCES user(id) ON DELETE CASCADE,
-    FOREIGN KEY (class_id) REFERENCES class(id) ON DELETE CASCADE
+
+CREATE TABLE volunteer_assignments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  volunteer_request_id INT DEFAULT NULL,
+  student_id INT NOT NULL,
+  class_id INT NOT NULL,
+  teacher_id INT NOT NULL,
+  assigned_by INT DEFAULT NULL,
+  status VARCHAR(45) NOT NULL DEFAULT 'requested',
+  approved TINYINT(1) NOT NULL DEFAULT 0,
+  approved_by INT DEFAULT NULL,
+  approved_at DATETIME DEFAULT NULL,
+  check_in DATETIME DEFAULT NULL,
+  check_out DATETIME DEFAULT NULL,
+  total_hours DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_volunteer_assignments_request (volunteer_request_id),
+  INDEX idx_volunteer_assignments_student (student_id),
+  INDEX idx_volunteer_assignments_class (class_id),
+  INDEX idx_volunteer_assignments_teacher (teacher_id)
 );
-RENAME TABLE volunteer TO volunteerHours;
+
+CREATE TABLE volunteer_hours (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id INT NOT NULL,
+  class_id INT NOT NULL,
+  check_in DATETIME DEFAULT NULL,
+  check_out DATETIME DEFAULT NULL,
+  total_hours DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  approved_by INT DEFAULT NULL,
+  approved TINYINT(1) NOT NULL DEFAULT 0,
+  approval_status VARCHAR(45) NOT NULL DEFAULT 'pending',
+  volunteer_request_id INT DEFAULT NULL,
+  volunteer_assignment_id INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_volunteer_hours_student (student_id),
+  INDEX idx_volunteer_hours_class (class_id),
+  INDEX idx_volunteer_hours_request (volunteer_request_id),
+  INDEX idx_volunteer_hours_assignment (volunteer_assignment_id)
+);
+
 ALTER TABLE volunteers 
+  ADD COLUMN student_id INT NULL,
   ADD COLUMN check_in DATETIME NULL,
   ADD COLUMN check_out DATETIME NULL,
-  ADD COLUMN total_hours DECIMAL(6,2) NOT NULL DEFAULT 0.00,
-  MODIFY COLUMN status VARCHAR(45) NOT NULL DEFAULT 'available';
-  SELECT id, first_name, last_name, status FROM volunteers;
-  UPDATE volunteers SET status = 'available' WHERE status NOT IN ('requesting_confirmation', 'checked_in', 'returning_confirmation');
-  ALTER TABLE volunteers
+  ADD COLUMN total_hours DECIMAL(10,2) NOT NULL DEFAULT 0.00,
   ADD COLUMN assigned_class_id INT NULL,
-  ADD COLUMN assigned_teacher_id INT NULL;
+  ADD COLUMN assigned_teacher_id INT NULL,
+  ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  MODIFY COLUMN status VARCHAR(45) NOT NULL DEFAULT 'available';
+
+UPDATE volunteers SET status = 'available' WHERE status NOT IN ('requesting_confirmation', 'checked_in', 'returning_confirmation');
 SET SQL_MODE=@OLD_SQL_MODE;
 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
@@ -270,3 +308,58 @@ ALTER TABLE `mydb`.`user`
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
 update `mydb`.`user` set password="test";
 UPDATE `mydb`.`user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2');
+
+INSERT INTO `mydb`.`user` (`id`, `first_name`, `last_name`, `email_address`, `role_id`, `password`) VALUES
+(10, 'Maya', 'Patel', 'maya.patel@example.com', 1, 'test'),
+(11, 'Jordan', 'Lee', 'jordan.lee@example.com', 1, 'test'),
+(20, 'Noah', 'Reed', 'noah.reed@example.com', 3, 'test'),
+(21, 'Lila', 'Santos', 'lila.santos@example.com', 3, 'test'),
+(22, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 3, 'test'),
+(23, 'Zara', 'Ali', 'zara.ali@example.com', 3, 'test');
+
+INSERT INTO `mydb`.`class` (`id`, `name`, `teacher_id`, `room_id`, `room`, `period`, `time`, `grade_level`) VALUES
+(10, 'Algebra I', 10, 1, 'Room 101', 'A1', '08:00-08:50', '10'),
+(11, 'Biology Lab', 11, 2, 'Lab 1', 'B2', '10:05-10:55', '11'),
+(12, 'Study Hall Support', 10, 1, 'Library', 'C3', '12:15-01:00', 'All');
+
+INSERT INTO `mydb`.`student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES
+(10, '10', 20, 10),
+(11, '11', 21, 11),
+(12, '10', 22, 12),
+(13, '11', 23, 11);
+
+INSERT INTO `mydb`.`schedule` (`id`, `name`, `decription`, `event_id`, `student_id`, `student_name`, `time`, `period`, `teacher`, `room`, `class_name`) VALUES
+(10, 'Math Class', 'Regular class period', NULL, 20, 'Noah Reed', '08:00-08:50', 'A1', 'Maya Patel', 'Room 101', 'Algebra I'),
+(11, 'Independent Period', 'Independent study time', NULL, 20, 'Noah Reed', '09:00-09:45', 'A2', NULL, 'Library', 'Independent Period'),
+(12, 'Study Hall', 'Supervised study hall', NULL, 21, 'Lila Santos', '12:15-01:00', 'C3', 'Jordan Lee', 'Library', 'Study Hall'),
+(13, 'Biology Lab', 'Regular class period', 2, 21, 'Lila Santos', '10:05-10:55', 'B2', 'Jordan Lee', 'Lab 1', 'Biology Lab'),
+(14, 'Orientation', 'School opening event', 1, 22, 'Ethan Nguyen', '12:30-01:30', 'Advisory', NULL, 'Auditorium', 'Event');
+
+INSERT INTO `volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
+(10, 10, 20, 10, 'Need a volunteer for the lab cleanup block.', 'pending', 0, NULL, NULL),
+(11, 11, 21, 11, 'Approved for study hall support during second period.', 'approved', 1, 1, '2026-07-01 09:30:00');
+
+INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
+(10, 10, 20, 10, 10, 1, 'requested', 0, NULL, NULL, NULL, NULL, 0.00),
+(11, 11, 21, 11, 11, 1, 'arrived', 1, 1, '2026-07-01 10:00:00', '2026-07-01 10:05:00', '2026-07-01 11:35:00', 1.50);
+
+INSERT INTO `volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
+(10, 22, 12, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 0.83, 1, 1, 'approved', 11, 11),
+(11, 21, 11, '2026-07-03 10:00:00', '2026-07-03 11:30:00', 1.50, 1, 1, 'approved', 11, 11);
+
+INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
+(10, 'Noah', 'Reed', 'noah.reed@example.com', 'available', 20, NULL, NULL, 12.50, NULL, NULL),
+(11, 'Lila', 'Santos', 'lila.santos@example.com', 'checked_in', 21, '2026-07-03 10:00:00', NULL, 8.25, 11, 11),
+(12, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 'returning_confirmation', 22, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 15.00, 12, 10);
+
+INSERT INTO `mydb`.`volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
+(12, 10, 23, 12, 'Need an extra volunteer for study hall supervision.', 'pending', 0, NULL, NULL);
+
+INSERT INTO `mydb`.`volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
+(12, 12, 23, 12, 10, 1, 'requested', 0, NULL, NULL, NULL, NULL, 0.00);
+
+INSERT INTO `mydb`.`volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
+(12, 23, 12, '2026-07-04 12:20:00', NULL, 0.00, NULL, 0, 'pending', 12, 12);
+
+INSERT INTO `mydb`.`volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
+(13, 'Zara', 'Ali', 'zara.ali@example.com', 'requesting_confirmation', 23, NULL, NULL, 0.00, 12, 10);
