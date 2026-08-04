@@ -42,7 +42,7 @@ const allowedColumns = {
   volunteers: ['id', 'student_id', 'first_name', 'last_name', 'email_address', 'status', 'check_in', 'check_out', 'total_hours', 'assigned_class_id', 'assigned_teacher_id', 'created_at', 'updated_at'],
   volunteer_requests: ['id', 'teacher_id', 'student_id', 'class_id', 'message', 'status', 'approved', 'approved_by', 'approved_at', 'created_at', 'updated_at'],
   volunteer_assignments: ['id', 'volunteer_request_id', 'student_id', 'class_id', 'teacher_id', 'assigned_by', 'status', 'approved', 'approved_by', 'approved_at', 'check_in', 'check_out', 'total_hours', 'created_at', 'updated_at'],
-  volunteer_hours: ['id', 'student_id', 'class_id', 'check_in', 'check_out', 'total_hours', 'approved_by', 'approved', 'approval_status', 'volunteer_request_id', 'volunteer_assignment_id', 'created_at', 'updated_at'],
+  volunteerHours: ['id', 'student_id', 'class_id', 'check_in', 'check_out', 'total_hours', 'approved_by', 'approved', 'approval_status', 'volunteer_request_id', 'volunteer_assignment_id', 'created_at', 'updated_at'],
   reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
   announcements: ['id', 'title', 'content', 'created_by', 'created_at', 'target_all', 'target_teacher_ids']
 };
@@ -1697,6 +1697,137 @@ app.post('/reviews', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+//// 1. Admin sends volunteer to a class
+app.post('/volunteers/:id/send', async (req, res) => {
+  const { id } = req.params;
+  const { teacher_id, class_id } = req.body;
+  try {
+    const [volunteerRows] = await db.query('SELECT student_id FROM volunteers WHERE id = ?', [id]);
+    if (!volunteerRows || !volunteerRows.length) {
+      return res.status(404).json({ error: 'Volunteer not found' });
+    }
+    const studentId = volunteerRows[0].student_id;
+
+    await db.query(
+      `UPDATE volunteers 
+       SET status = 'requesting_confirmation', 
+           assigned_teacher_id = ?, 
+           assigned_class_id = ? 
+       WHERE id = ?`,
+      [teacher_id, class_id, id]
+    );
+
+    await db.query(
+      `INSERT INTO \`volunteer_hours\` (student_id, class_id, approval_status) 
+       VALUES (?, ?, 'pending')`,
+      [studentId, class_id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Teacher confirms arrival
+app.post('/volunteers/:id/arrive', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [volunteerRows] = await db.query('SELECT student_id, assigned_class_id FROM volunteers WHERE id = ?', [id]);
+    if (!volunteerRows || !volunteerRows.length) {
+      return res.status(404).json({ error: 'Volunteer not found' });
+    }
+    const { student_id, assigned_class_id } = volunteerRows[0];
+
+    await db.query(
+      `UPDATE volunteers 
+       SET status = 'Currently Volunteering', 
+           check_in = NOW() 
+       WHERE id = ?`,
+      [id]
+    );
+
+    await db.query(
+      `UPDATE \`volunteer_hours\` 
+       SET check_in = NOW() 
+       WHERE student_id = ? AND class_id = ? AND check_in IS NULL`,
+      [student_id, assigned_class_id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Teacher sends back to class (Updated: removed strict check_in requirement so it can be triggered whenever)
+app.post('/volunteers/:id/return', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await db.query('SELECT check_in, student_id FROM volunteers WHERE id = ?', [id]);
+    if (!rows || !rows.length) {
+      return res.status(404).json({ error: 'Volunteer not found' });
+    }
+
+    const checkInTime = rows[0].check_in ? new Date(rows[0].check_in) : null;
+    const studentId = rows[0].student_id;
+    
+    let hoursElapsed = 0;
+    if (checkInTime) {
+      const now = new Date();
+      hoursElapsed = (now - checkInTime) / (1000 * 60 * 60);
+    }
+
+    await db.query(
+      `UPDATE volunteers 
+       SET status = 'requesting_confirmation', 
+           check_out = NOW(), 
+           total_hours = COALESCE(total_hours, 0) + ?,
+           check_in = NULL
+       WHERE id = ?`,
+      [hoursElapsed, id]
+    );
+
+    await db.query(
+      `UPDATE \`volunteer_hours\` 
+       SET check_out = NOW(), 
+           hours = ?, 
+           total_hours = (SELECT total_hours FROM volunteers WHERE id = ?),
+           approval_status = 'pending'
+       WHERE student_id = ? AND check_out IS NULL`,
+      [hoursElapsed, id, studentId]
+    );
+
+    res.json({ success: true, hoursAdded: hoursElapsed });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Admin confirms return
+app.post('/volunteers/:id/confirm-return', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query(
+      `UPDATE volunteers 
+       SET status = 'Available', 
+           teacher_id = NULL, 
+           assigned_class_id = NULL, 
+           assigned_teacher_id = NULL,
+           check_in = NULL, 
+           check_out = NULL 
+       WHERE id = ?`,
+      [id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
