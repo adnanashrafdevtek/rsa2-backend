@@ -412,6 +412,45 @@ async function ensureVolunteerRecord(studentId) {
   return createdRows[0] || null;
 }
 
+async function syncVolunteerStudentLinks() {
+  try {
+    await db.query(
+      "UPDATE `volunteers` v JOIN `user` u ON u.`email_address` = v.`email_address` AND u.`role_id` = 3 SET v.`student_id` = u.`id` WHERE v.`student_id` IS NULL"
+    );
+  } catch (err) {
+    console.error('Unable to sync volunteer student links:', err.message);
+  }
+}
+
+async function syncActiveVolunteerHours() {
+  try {
+    const [activeVolunteers] = await db.query(
+      "SELECT `student_id`, `check_in` FROM `volunteers` WHERE `status` = 'checked_in' AND `student_id` IS NOT NULL AND `check_in` IS NOT NULL"
+    );
+
+    const now = Date.now();
+    for (const volunteer of activeVolunteers) {
+      const checkInTime = new Date(volunteer.check_in).getTime();
+      if (!Number.isFinite(checkInTime)) continue;
+      const elapsedHours = Math.max((now - checkInTime) / (1000 * 60 * 60), 0);
+
+      const [openHourRows] = await db.query(
+        'SELECT `id` FROM `volunteer_hours` WHERE `student_id` = ? AND `check_in` IS NOT NULL AND `check_out` IS NULL ORDER BY `id` DESC LIMIT 1',
+        [volunteer.student_id]
+      );
+
+      if (!openHourRows.length) continue;
+
+      await db.query(
+        'UPDATE `volunteer_hours` SET `total_hours` = ?, `approval_status` = ? WHERE `id` = ?',
+        [elapsedHours.toFixed(2), 'pending', openHourRows[0].id]
+      );
+    }
+  } catch (err) {
+    console.error('Unable to sync active volunteer hours:', err.message);
+  }
+}
+
 async function ensureScheduleColumns() {
   await ensureColumnDefinition('schedule', 'name', 'VARCHAR(45) NULL DEFAULT NULL');
   await ensureColumnDefinition('schedule', 'decription', 'VARCHAR(255) NULL DEFAULT NULL');
@@ -868,7 +907,52 @@ registerTableRoutes({ collectionPath: '/schedules', table: 'schedule', aliases: 
 registerTableRoutes({ collectionPath: '/student_classes', table: 'student_class', aliases: ['/student_class'] });
 registerTableRoutes({ collectionPath: '/clubs', table: 'club', aliases: ['/club'] });
 registerTableRoutes({ collectionPath: '/events', table: 'event', aliases: ['/event'] });
-registerTableRoutes({ collectionPath: '/volunteers', table: 'volunteers', aliases: ['/volunteer', '/api/volunteers'] });
+app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
+  try {
+    await syncVolunteerStudentLinks();
+    await syncActiveVolunteerHours();
+    await sendTableRows(res, 'volunteers', req.query);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.get('/volunteers/:id', async (req, res) => {
+  try {
+    await syncVolunteerStudentLinks();
+    await syncActiveVolunteerHours();
+    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.get('/volunteer/:id', async (req, res) => {
+  try {
+    await syncVolunteerStudentLinks();
+    await syncActiveVolunteerHours();
+    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.get('/api/volunteers/:id', async (req, res) => {
+  try {
+    await syncVolunteerStudentLinks();
+    await syncActiveVolunteerHours();
+    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 registerTableRoutes({ collectionPath: '/volunteer_requests', table: 'volunteer_requests', aliases: ['/volunteer-requests'] });
 registerTableRoutes({ collectionPath: '/volunteer_assignments', table: 'volunteer_assignments', aliases: ['/volunteer-assignments'] });
 registerTableRoutes({ collectionPath: '/volunteer_hours', table: 'volunteer_hours', aliases: ['/volunteerHours', '/volunteer-hours'] });
@@ -1484,15 +1568,18 @@ app.get('/classes', async (req, res) => {
 });
 app.post('/volunteerHours/check-in', async (req, res) => {
   try {
-    const studentId = Number(req.body?.student_id);
-    if (!studentId) {
+    const requestedVolunteerOrStudentId = Number(req.body?.student_id);
+    if (!requestedVolunteerOrStudentId) {
       return res.status(400).json({ status: 'error', message: 'student_id is required' });
     }
 
-    const volunteerRecord = await ensureVolunteerRecord(studentId);
+    const volunteerRecord = await ensureVolunteerRecord(requestedVolunteerOrStudentId);
     if (!volunteerRecord) {
       return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
     }
+
+    const volunteerRowId = Number(volunteerRecord.id);
+    const studentId = Number(volunteerRecord.student_id) || requestedVolunteerOrStudentId;
 
     const { status: currentStatus, check_in, check_out, total_hours: existingHours } = volunteerRecord;
     const role = getUserRole(req).toLowerCase();
@@ -1502,7 +1589,7 @@ app.post('/volunteerHours/check-in', async (req, res) => {
 
     // Teacher confirms the volunteer has arrived
     if (currentStatus === 'requesting_confirmation') {
-      if (role !== 'teacher' && role !== 'admin') {
+      if (role !== 'teacher') {
         return res.status(403).json({ status: 'error', message: 'Teacher access required' });
       }
 
@@ -1516,7 +1603,7 @@ app.post('/volunteerHours/check-in', async (req, res) => {
 
       await db.query(
         "UPDATE `volunteers` SET `status` = 'checked_in', `check_in` = NOW(), `check_out` = NULL WHERE id = ?",
-        [studentId]
+        [volunteerRowId]
       );
 
       if (activeAssignment) {
@@ -1527,10 +1614,22 @@ app.post('/volunteerHours/check-in', async (req, res) => {
       }
 
       if (volunteerClassId) {
-        await db.query(
-          'INSERT INTO `volunteer_hours` (`student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES (?, ?, ?, NULL, 0.00, NULL, 0, ?, ?, ?)',
-          [studentId, volunteerClassId, nowValue, 'pending', activeAssignment?.volunteer_request_id || null, activeAssignment?.id || null]
+        const [pendingHourRows] = await db.query(
+          'SELECT `id` FROM `volunteer_hours` WHERE `student_id` = ? AND `class_id` = ? AND `check_in` IS NULL AND `check_out` IS NULL ORDER BY `id` DESC LIMIT 1',
+          [studentId, volunteerClassId]
         );
+
+        if (pendingHourRows.length) {
+          await db.query(
+            'UPDATE `volunteer_hours` SET `check_in` = ?, `approval_status` = ?, `volunteer_request_id` = COALESCE(`volunteer_request_id`, ?), `volunteer_assignment_id` = COALESCE(`volunteer_assignment_id`, ?) WHERE `id` = ?',
+            [nowValue, 'pending', activeAssignment?.volunteer_request_id || null, activeAssignment?.id || null, pendingHourRows[0].id]
+          );
+        } else {
+          await db.query(
+            'INSERT INTO `volunteer_hours` (`student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES (?, ?, ?, NULL, 0.00, NULL, 0, ?, ?, ?)',
+            [studentId, volunteerClassId, nowValue, 'pending', activeAssignment?.volunteer_request_id || null, activeAssignment?.id || null]
+          );
+        }
       }
 
       return res.json({ status: 'ok', message: 'Checked in successfully' });
@@ -1577,7 +1676,7 @@ app.post('/volunteerHours/check-in', async (req, res) => {
 
       await db.query(
         "UPDATE `volunteers` SET `status` = 'available', `total_hours` = ?, `check_in` = NULL, `check_out` = NULL, `assigned_class_id` = NULL, `assigned_teacher_id` = NULL WHERE id = ?",
-        [newTotal.toFixed(2), studentId]
+        [newTotal.toFixed(2), volunteerRowId]
       );
       return res.json({ status: 'ok', message: 'Return confirmed', hoursAdded: hoursWorked.toFixed(2) });
     }
@@ -1591,15 +1690,18 @@ app.post('/volunteerHours/check-in', async (req, res) => {
 
 app.post('/volunteerHours/check-out', async (req, res) => {
   try {
-    const studentId = Number(req.body?.student_id);
-    if (!studentId) {
+    const requestedVolunteerOrStudentId = Number(req.body?.student_id);
+    if (!requestedVolunteerOrStudentId) {
       return res.status(400).json({ status: 'error', message: 'student_id is required' });
     }
 
-    const volunteerRecord = await ensureVolunteerRecord(studentId);
+    const volunteerRecord = await ensureVolunteerRecord(requestedVolunteerOrStudentId);
     if (!volunteerRecord) {
       return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
     }
+
+    const volunteerRowId = Number(volunteerRecord.id);
+    const studentId = Number(volunteerRecord.student_id) || requestedVolunteerOrStudentId;
 
     const currentStatus = volunteerRecord.status;
     const role = getUserRole(req).toLowerCase();
@@ -1636,7 +1738,7 @@ app.post('/volunteerHours/check-out', async (req, res) => {
 
       await db.query(
         "UPDATE `volunteers` SET `status` = 'requesting_confirmation', `assigned_class_id` = ?, `assigned_teacher_id` = ? WHERE id = ?",
-        [classId, classRows[0].teacher_id, studentId]
+        [classId, classRows[0].teacher_id, volunteerRowId]
       );
       return res.json({ status: 'ok', message: 'Requesting teacher confirmation' });
     }
@@ -1675,7 +1777,7 @@ app.post('/volunteerHours/check-out', async (req, res) => {
 
       await db.query(
         "UPDATE `volunteers` SET `status` = 'returning_confirmation', `check_out` = NOW() WHERE id = ?",
-        [studentId]
+        [volunteerRowId]
       );
       return res.json({ status: 'ok', message: 'Requesting admin confirmation' });
     }
@@ -1813,8 +1915,7 @@ app.post('/volunteers/:id/confirm-return', async (req, res) => {
   try {
     await db.query(
       `UPDATE volunteers 
-       SET status = 'Available', 
-           teacher_id = NULL, 
+       SET status = 'available', 
            assigned_class_id = NULL, 
            assigned_teacher_id = NULL,
            check_in = NULL, 

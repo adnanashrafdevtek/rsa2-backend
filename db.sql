@@ -266,8 +266,8 @@ SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
 
 
-INSERT INTO `mydb`.`role` (`name`) VALUES ('Teacher');
 INSERT INTO `mydb`.`role` (`name`) VALUES ('Admin');
+INSERT INTO `mydb`.`role` (`name`) VALUES ('Teacher');
 INSERT INTO `mydb`.`role` (`name`) VALUES ('Student');
 INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Ali', 'Ashraf', 'aashraf@gmail.com', '2');
 INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Omar', 'ahmed', 'oahmed@gmail.com', '3');
@@ -311,7 +311,11 @@ UPDATE `mydb`.`user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2'
 
 INSERT INTO `mydb`.`user` (`id`, `first_name`, `last_name`, `email_address`, `role_id`, `password`) VALUES
 (10, 'Maya', 'Patel', 'maya.patel@example.com', 1, 'test'),
-(11, 'Jordan', 'Lee', 'jordan.lee@example.com', 1, 'test'),
+(11, 'Jordan', 'Lee', 'jordan.lee@example.com', 2, 'test'),
+(12, 'Ava', 'Thompson', 'ava.thompson@example.com', 2, 'test'),
+(13, 'Eli', 'Ramirez', 'eli.ramirez@example.com', 2, 'test'),
+(14, 'Sofia', 'Miller', 'sofia.miller@example.com', 2, 'test'),
+(15, 'Noah', 'Kim', 'noah.kim@example.com', 2, 'test'),
 (20, 'Noah', 'Reed', 'noah.reed@example.com', 3, 'test'),
 (21, 'Lila', 'Santos', 'lila.santos@example.com', 3, 'test'),
 (22, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 3, 'test'),
@@ -320,7 +324,11 @@ INSERT INTO `mydb`.`user` (`id`, `first_name`, `last_name`, `email_address`, `ro
 INSERT INTO `mydb`.`class` (`id`, `name`, `teacher_id`, `room_id`, `room`, `period`, `time`, `grade_level`) VALUES
 (10, 'Algebra I', 10, 1, 'Room 101', 'A1', '08:00-08:50', '10'),
 (11, 'Biology Lab', 11, 2, 'Lab 1', 'B2', '10:05-10:55', '11'),
-(12, 'Study Hall Support', 10, 1, 'Library', 'C3', '12:15-01:00', 'All');
+(12, 'Study Hall Support', 10, 1, 'Library', 'C3', '12:15-01:00', 'All'),
+(13, 'Chemistry Lab', 12, 2, 'Lab 1', 'D1', '01:15-02:05', '11'),
+(14, 'Creative Writing', 13, 1, 'Room 101', 'E2', '02:10-03:00', '10'),
+(15, 'Physics Lab', 14, 2, 'Lab 1', 'F1', '08:55-09:45', '11'),
+(16, 'Reading Workshop', 15, 1, 'Room 101', 'F2', '09:50-10:40', '10');
 
 INSERT INTO `mydb`.`student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES
 (10, '10', 20, 10),
@@ -345,7 +353,17 @@ INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`,
 
 INSERT INTO `volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
 (10, 22, 12, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 0.83, 1, 1, 'approved', 11, 11),
-(11, 21, 11, '2026-07-03 10:00:00', '2026-07-03 11:30:00', 1.50, 1, 1, 'approved', 11, 11);
+(11, 21, 11, '2026-07-03 10:00:00', '2026-07-03 11:30:00', 1.50, 1, 1, 'approved', 11, 11),
+(13, 20, 15, '2026-07-04 08:55:00', NULL, 0.00, NULL, 0, 'pending', 13, 13),
+(14, 23, 16, '2026-07-04 09:50:00', '2026-07-04 10:40:00', 0.83, 1, 1, 'approved', 14, 14);
+
+INSERT INTO `volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
+(13, 14, 20, 15, 'Need a volunteer for the physics lab demo.', 'approved', 1, 1, '2026-07-04 08:30:00'),
+(14, 15, 23, 16, 'Need a volunteer for the reading workshop.', 'approved', 1, 1, '2026-07-04 09:30:00');
+
+INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
+(13, 13, 20, 15, 14, 1, 'checked_in', 1, 1, '2026-07-04 08:40:00', '2026-07-04 08:55:00', NULL, 0.00),
+(14, 14, 23, 16, 15, 1, 'returning_confirmation', 1, 1, '2026-07-04 09:35:00', '2026-07-04 09:50:00', '2026-07-04 10:40:00', 0.83);
 
 INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
 (10, 'Noah', 'Reed', 'noah.reed@example.com', 'available', 20, NULL, NULL, 12.50, NULL, NULL),
