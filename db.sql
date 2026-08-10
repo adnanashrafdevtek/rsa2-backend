@@ -297,6 +297,11 @@ INSERT INTO `reviews` (`user_id`, `rating`, `comment`) VALUES
 (1, 5, 'Great system and very easy to use!'),
 (2, 4, 'Helpful, though a few features could be faster.');
 
+
+ALTER TABLE `class` DROP PRIMARY KEY, ADD PRIMARY KEY (`id`);
+ALTER TABLE `class` MODIFY COLUMN `teacher_id` INT NULL;
+ALTER TABLE `class` MODIFY COLUMN `room_id` INT NULL;
+
 INSERT INTO `announcements` (`title`, `content`, `created_by`) VALUES
 ('Welcome to the New Term', 'Please make sure all attendance records are updated weekly.', 1),
 ('System Maintenance', 'Scheduled downtime this coming Saturday at midnight.', 1);
