@@ -17,3 +17,20 @@ test('parseImportRows extracts headers and data from CSV content', () => {
     }
   ]);
 });
+
+test('parseImportRows preserves password and grade columns when present', () => {
+  const rows = parseImportRows(
+    Buffer.from('first_name,last_name,email_address,password,grade\nJane,Doe,jane@example.com,secret123,10\n'),
+    'users.csv'
+  );
+
+  assert.deepEqual(rows, [
+    {
+      first_name: 'Jane',
+      last_name: 'Doe',
+      email_address: 'jane@example.com',
+      password: 'secret123',
+      grade: '10'
+    }
+  ]);
+});

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS `mydb`.`user` (
   `last_name` VARCHAR(45) NOT NULL,
   `email_address` VARCHAR(45) NOT NULL,
   `role_id` INT(11) NOT NULL,
+  `password` VARCHAR(255) NULL DEFAULT NULL,
+  `grade` VARCHAR(45) NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE INDEX `iduser_UNIQUE` (`id` ASC) ,
   UNIQUE INDEX `email_address_UNIQUE` (`email_address` ASC) ,

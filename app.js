@@ -1,6 +1,7 @@
 // src/app.js
- require('dotenv').config();
- const nodemailer = require('nodemailer');
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '.env'), override: true });
+const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
   host: "sandbox.smtp.mailtrap.io",
@@ -28,7 +29,7 @@ try {
 // Allowed filter columns per table to avoid SQL injection
 const allowedColumns = {
   role: ['id', 'name'],
-  user: ['id', 'first_name', 'last_name', 'email_address', 'role_id'],
+  user: ['id', 'first_name', 'last_name', 'email_address', 'role_id', 'password', 'grade'],
   class: ['id', 'name', 'teacher_id', 'room_id', 'room', 'period', 'time', 'grade_level'],
   room: ['id', 'name', 'event_id', 'class_id', 'period'],
   message: ['id', 'sender_id', 'receiver_id', 'message'],
@@ -169,6 +170,11 @@ async function ensureClassColumns() {
   await ensureColumn('class', 'period', 'VARCHAR(45) NULL');
   await ensureColumn('class', 'time', 'VARCHAR(45) NULL');
   await ensureColumn('class', 'grade_level', 'VARCHAR(45) NULL');
+}
+
+async function ensureUserColumns() {
+  await ensureColumnDefinition('user', 'password', 'VARCHAR(255) NULL');
+  await ensureColumn('user', 'grade', 'VARCHAR(45) NULL');
 }
 
 async function ensureUserSchedulesTable() {
@@ -501,6 +507,7 @@ async function createLinkedRoom(roomName, period) {
 
 ensureRoomColumns();
 ensureClassColumns();
+ensureUserColumns();
 ensureScheduleColumns();
 ensureUserSchedulesTable();
 ensureStudentClassTable();
@@ -786,11 +793,12 @@ app.post('/user/import-file', async (req, res) => {
 
     const rows = getImportRows(fileBuffer, fileName);
     if (!rows.length) {
-      return res.json({ status: 'ok', insertedCount: 0, errors: [] });
+      return res.json({ status: 'ok', insertedCount: 0, duplicateCount: 0, errors: [] });
     }
 
     const errors = [];
     let insertedCount = 0;
+    let duplicateCount = 0;
 
     for (const [index, row] of rows.entries()) {
       const normalizedRow = {};
@@ -802,6 +810,8 @@ app.post('/user/import-file', async (req, res) => {
       const lastName = pickRowValue(normalizedRow, ['last_name', 'lastname', 'lastName']);
       const emailAddress = pickRowValue(normalizedRow, ['email_address', 'email', 'emailaddress', 'emailAddress']);
       const roleName = pickRowValue(normalizedRow, ['role_name', 'role', 'rolename', 'roleName']);
+      const password = pickRowValue(normalizedRow, ['password', 'user_password', 'pass']);
+      const grade = pickRowValue(normalizedRow, ['grade', 'grade_level', 'student_grade']);
 
       if (!firstName || !lastName || !emailAddress) {
         errors.push({ index: index + 2, message: 'Missing required first_name, last_name, or email_address' });
@@ -814,10 +824,18 @@ app.post('/user/import-file', async (req, res) => {
         const [existingRows] = await db.query('SELECT id FROM `user` WHERE email_address = ? LIMIT 1', [normalizedEmail]);
 
         if (existingRows.length) {
-          await db.query('UPDATE `user` SET first_name = ?, last_name = ?, role_id = ? WHERE id = ?', [firstName, lastName, roleId, existingRows[0].id]);
-        } else {
-          await db.query('INSERT INTO `user` (first_name, last_name, email_address, role_id) VALUES (?, ?, ?, ?)', [firstName, lastName, normalizedEmail, roleId]);
+          duplicateCount += 1;
+          errors.push({
+            index: index + 2,
+            message: `User already exists: ${normalizedEmail}`
+          });
+          continue;
         }
+
+        await db.query(
+          'INSERT INTO `user` (first_name, last_name, email_address, role_id, password, grade) VALUES (?, ?, ?, ?, ?, ?)',
+          [firstName, lastName, normalizedEmail, roleId, password || null, grade || null]
+        );
 
         insertedCount += 1;
       } catch (rowErr) {
@@ -825,7 +843,7 @@ app.post('/user/import-file', async (req, res) => {
       }
     }
 
-    res.json({ status: 'ok', insertedCount, errors });
+    res.json({ status: 'ok', insertedCount, duplicateCount, errors });
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
