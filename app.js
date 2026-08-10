@@ -1929,6 +1929,66 @@ app.post('/volunteers/:id/confirm-return', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.post('/classes/import-csv', requireAdmin, async (req, res) => {
+  try {
+    const fileBuffer = decodeUploadBuffer(req.body?.file_data);
+    const fileName = String(req.body?.file_name || 'import.csv');
+
+    if (!fileBuffer || !fileBuffer.length) {
+      return res.status(400).json({ status: 'error', message: 'A file upload is required' });
+    }
+
+    const rows = getImportRows(fileBuffer, fileName);
+    const errors = [];
+    let insertedCount = 0;
+
+    for (const [index, row] of rows.entries()) {
+      const normalizedRow = {};
+      Object.entries(row || {}).forEach(([key, value]) => {
+        normalizedRow[normalizeHeader(key)] = String(value ?? '').trim();
+      });
+
+      const className = pickRowValue(normalizedRow, ['class', 'class_name']);
+      const room = pickRowValue(normalizedRow, ['room']);
+      const teacherEmail = pickRowValue(normalizedRow, ['t_email', 'teacher_email']);
+      const gradeLevel = pickRowValue(normalizedRow, ['grade', 'grade_level']);
+      const time = pickRowValue(normalizedRow, ['timings', 'time']);
+      const period = pickRowValue(normalizedRow, ['a_b_day', 'ab_day', 'period']);
+
+      if (!className) continue;
+
+      try {
+        // --- STEP 2: teacher lookup by email ---
+        let teacherId = null;
+        if (teacherEmail) {
+          const [teacherRows] = await db.query(
+            'SELECT id FROM `user` WHERE LOWER(TRIM(email_address)) = LOWER(TRIM(?)) LIMIT 1',
+            [teacherEmail]
+          );
+          if (teacherRows.length) {
+            teacherId = teacherRows[0].id;
+          } else {
+            errors.push({ index: index + 2, message: `No user found with email "${teacherEmail}" — class saved without a teacher.` });
+          }
+        }
+        // --- end step 2 ---
+
+        await db.query(
+          'INSERT INTO `class` (name, teacher_id, room, grade_level, time, period) VALUES (?, ?, ?, ?, ?, ?)',
+          [className, teacherId, room || null, gradeLevel || null, time || null, period || null]
+        );
+        insertedCount += 1;
+      } catch (rowErr) {
+        errors.push({ index: index + 2, message: rowErr.message });
+      }
+    }
+
+    res.json({ status: 'ok', message: 'Classes imported successfully!', insertedCount, errors });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
