@@ -12,7 +12,7 @@ SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,N
 DROP SCHEMA IF EXISTS `mydb2`;
 CREATE SCHEMA IF NOT EXISTS `mydb2` DEFAULT CHARACTER SET utf8 ;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`user` (
+CREATE TABLE IF NOT EXISTS `user` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `first_name` VARCHAR(45) NOT NULL,
   `last_name` VARCHAR(45) NOT NULL,
@@ -26,13 +26,13 @@ CREATE TABLE IF NOT EXISTS `mydb`.`user` (
   INDEX `fk_user_role1_idx` (`role_id` ASC) ,
   CONSTRAINT `fk_user_role1`
     FOREIGN KEY (`role_id`)
-    REFERENCES `mydb`.`role` (`id`)
+    REFERENCES `role` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`role` (
+CREATE TABLE IF NOT EXISTS `role` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   PRIMARY KEY (`id`),
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS `mydb`.`role` (
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`class` (
+CREATE TABLE IF NOT EXISTS `class` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `teacher_id` INT(11) NOT NULL,
@@ -51,18 +51,18 @@ CREATE TABLE IF NOT EXISTS `mydb`.`class` (
   INDEX `fk_class_room1_idx` (`room_id` ASC) ,
   CONSTRAINT `fk_class_user`
     FOREIGN KEY (`teacher_id`)
-    REFERENCES `mydb`.`user` (`id`)
+    REFERENCES `user` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION,
   CONSTRAINT `fk_class_room1`
     FOREIGN KEY (`room_id`)
-    REFERENCES `mydb`.`room` (`id`)
+    REFERENCES `room` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`room` (
+CREATE TABLE IF NOT EXISTS `room` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `event_id` INT(11) NOT NULL,
@@ -72,13 +72,13 @@ CREATE TABLE IF NOT EXISTS `mydb`.`room` (
   INDEX `fk_room_event1_idx` (`event_id` ASC) ,
   CONSTRAINT `fk_room_event1`
     FOREIGN KEY (`event_id`)
-    REFERENCES `mydb`.`event` (`id`)
+    REFERENCES `event` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`message` (
+CREATE TABLE IF NOT EXISTS `message` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `sender_id` INT(11) NOT NULL,
   `receiver_id` INT(11) NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS `mydb`.`message` (
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`schedule` (
+CREATE TABLE IF NOT EXISTS `schedule` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NULL DEFAULT NULL,
   `decription` VARCHAR(255) NULL DEFAULT NULL,
@@ -103,13 +103,13 @@ CREATE TABLE IF NOT EXISTS `mydb`.`schedule` (
   INDEX `fk_schedule_event_idx` (`event_id` ASC) ,
   CONSTRAINT `fk_schedule_event`
     FOREIGN KEY (`event_id`)
-    REFERENCES `mydb`.`event` (`id`)
+    REFERENCES `event` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`student_class` (
+CREATE TABLE IF NOT EXISTS `student_class` (
   `id` INT(11) NOT NULL,
   `grade_level` VARCHAR(45) NULL DEFAULT NULL,
   `user_iduser` INT(11) NOT NULL,
@@ -119,18 +119,18 @@ CREATE TABLE IF NOT EXISTS `mydb`.`student_class` (
   INDEX `fk_student_class_class1_idx` (`class_idclass` ASC) ,
   CONSTRAINT `fk_student_class_user1`
     FOREIGN KEY (`user_iduser`)
-    REFERENCES `mydb`.`user` (`id`)
+    REFERENCES `user` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION,
   CONSTRAINT `fk_student_class_class1`
     FOREIGN KEY (`class_idclass`)
-    REFERENCES `mydb`.`class` (`id`)
+    REFERENCES `class` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`club` (
+CREATE TABLE IF NOT EXISTS `club` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `description` VARCHAR(45) NULL DEFAULT NULL,
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS `mydb`.`club` (
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`event` (
+CREATE TABLE IF NOT EXISTS `event` (
   `id` INT(11) NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(45) NOT NULL,
   `description` VARCHAR(45) NULL DEFAULT NULL,
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS `mydb`.`event` (
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
-CREATE TABLE IF NOT EXISTS `mydb`.`club_has_event` (
+CREATE TABLE IF NOT EXISTS `club_has_event` (
   `club_id` INT(11) NOT NULL,
   `event_id` INT(11) NOT NULL,
   PRIMARY KEY (`club_id`, `event_id`),
@@ -156,12 +156,12 @@ CREATE TABLE IF NOT EXISTS `mydb`.`club_has_event` (
   INDEX `fk_club_has_event_club1_idx` (`club_id` ASC) ,
   CONSTRAINT `fk_club_has_event_club1`
     FOREIGN KEY (`club_id`)
-    REFERENCES `mydb`.`club` (`id`)
+    REFERENCES `club` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION,
   CONSTRAINT `fk_club_has_event_event1`
     FOREIGN KEY (`event_id`)
-    REFERENCES `mydb`.`event` (`id`)
+    REFERENCES `event` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
   
@@ -268,33 +268,33 @@ SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
 
 
-INSERT INTO `mydb`.`role` (`name`) VALUES ('Admin');
-INSERT INTO `mydb`.`role` (`name`) VALUES ('Teacher');
-INSERT INTO `mydb`.`role` (`name`) VALUES ('Student');
-INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Ali', 'Ashraf', 'aashraf@gmail.com', '2');
-INSERT INTO `mydb`.`user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Omar', 'ahmed', 'oahmed@gmail.com', '3');
-INSERT INTO `mydb`.`event` (`name`, `description`, `room`, `date`) VALUES ('Orientation', 'Welcome and info session', 'Auditorium', '2026-07-05 12:30:00');
-INSERT INTO `mydb`.`event` (`name`, `description`, `room`, `date`) VALUES ('Science Fair', 'Student science projects', 'Lab 1', '2026-07-15 09:00:00');
+INSERT INTO `role` (`name`) VALUES ('Admin');
+INSERT INTO `role` (`name`) VALUES ('Teacher');
+INSERT INTO `role` (`name`) VALUES ('Student');
+INSERT INTO `user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Ali', 'Ashraf', 'aashraf@gmail.com', '2');
+INSERT INTO `user` (`first_name`, `last_name`, `email_address`, `role_id`) VALUES ('Omar', 'ahmed', 'oahmed@gmail.com', '3');
+INSERT INTO `event` (`name`, `description`, `room`, `date`) VALUES ('Orientation', 'Welcome and info session', 'Auditorium', '2026-07-05 12:30:00');
+INSERT INTO `event` (`name`, `description`, `room`, `date`) VALUES ('Science Fair', 'Student science projects', 'Lab 1', '2026-07-15 09:00:00');
 
-INSERT INTO `mydb`.`room` (`name`, `event_id`) VALUES ('Auditorium', 1);
-INSERT INTO `mydb`.`room` (`name`, `event_id`) VALUES ('Lab 1', 2);
+INSERT INTO `room` (`name`, `event_id`) VALUES ('Auditorium', 1);
+INSERT INTO `room` (`name`, `event_id`) VALUES ('Lab 1', 2);
 
-INSERT INTO `mydb`.`club` (`name`, `description`) VALUES ('Chess Club', 'Weekly chess meetings');
-INSERT INTO `mydb`.`club` (`name`, `description`) VALUES ('Robotics Club', 'Build and program robots');
+INSERT INTO `club` (`name`, `description`) VALUES ('Chess Club', 'Weekly chess meetings');
+INSERT INTO `club` (`name`, `description`) VALUES ('Robotics Club', 'Build and program robots');
 
-INSERT INTO `mydb`.`club_has_event` (`club_id`, `event_id`) VALUES (1, 1);
-INSERT INTO `mydb`.`club_has_event` (`club_id`, `event_id`) VALUES (2, 2);
+INSERT INTO `club_has_event` (`club_id`, `event_id`) VALUES (1, 1);
+INSERT INTO `club_has_event` (`club_id`, `event_id`) VALUES (2, 2);
 
-INSERT INTO `mydb`.`class` (`name`, `teacher_id`, `room_id`) VALUES ('Biology 101', 1, 2);
-INSERT INTO `mydb`.`class` (`name`, `teacher_id`, `room_id`) VALUES ('Math 201', 1, 1);
+INSERT INTO `class` (`name`, `teacher_id`, `room_id`) VALUES ('Biology 101', 1, 2);
+INSERT INTO `class` (`name`, `teacher_id`, `room_id`) VALUES ('Math 201', 1, 1);
 
-INSERT INTO `mydb`.`student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES (1, '10', 2, 1);
+INSERT INTO `student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES (1, '10', 2, 1);
 
-INSERT INTO `mydb`.`message` (`sender_id`, `receiver_id`, `message`) VALUES (1, 2, 'Welcome to the system');
-INSERT INTO `mydb`.`message` (`sender_id`, `receiver_id`, `message`) VALUES (2, 1, 'Thanks, got it');
+INSERT INTO `message` (`sender_id`, `receiver_id`, `message`) VALUES (1, 2, 'Welcome to the system');
+INSERT INTO `message` (`sender_id`, `receiver_id`, `message`) VALUES (2, 1, 'Thanks, got it');
 
-INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Orientation Morning', 'For new students', 1);
-INSERT INTO `mydb`.`schedule` (`name`, `decription`, `event_id`) VALUES ('Science Fair Day', 'Bring projects', 2);
+INSERT INTO `schedule` (`name`, `decription`, `event_id`) VALUES ('Orientation Morning', 'For new students', 1);
+INSERT INTO `schedule` (`name`, `decription`, `event_id`) VALUES ('Science Fair Day', 'Bring projects', 2);
 INSERT INTO `reviews` (`user_id`, `rating`, `comment`) VALUES
 (1, 5, 'Great system and very easy to use!'),
 (2, 4, 'Helpful, though a few features could be faster.');
@@ -311,12 +311,12 @@ INSERT INTO `volunteers` (`first_name`, `last_name`, `email_address`, `status`) 
 ('Jane', 'Doe', 'jane.doe@example.com', 'active'),
 ('John', 'Smith', 'john.smith@example.com', 'active'),
 ('Alice', 'Johnson', 'alice.j@example.com', 'inactive');
-ALTER TABLE `mydb`.`user` 
+ALTER TABLE `user` 
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
-update `mydb`.`user` set password="test";
-UPDATE `mydb`.`user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2');
+update `user` set password="test";
+UPDATE `user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2');
 
-INSERT INTO `mydb`.`user` (`id`, `first_name`, `last_name`, `email_address`, `role_id`, `password`) VALUES
+INSERT INTO `user` (`id`, `first_name`, `last_name`, `email_address`, `role_id`, `password`) VALUES
 (10, 'Maya', 'Patel', 'maya.patel@example.com', 1, 'test'),
 (11, 'Jordan', 'Lee', 'jordan.lee@example.com', 2, 'test'),
 (12, 'Ava', 'Thompson', 'ava.thompson@example.com', 2, 'test'),
@@ -328,7 +328,7 @@ INSERT INTO `mydb`.`user` (`id`, `first_name`, `last_name`, `email_address`, `ro
 (22, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 3, 'test'),
 (23, 'Zara', 'Ali', 'zara.ali@example.com', 3, 'test');
 
-INSERT INTO `mydb`.`class` (`id`, `name`, `teacher_id`, `room_id`, `room`, `period`, `time`, `grade_level`) VALUES
+INSERT INTO `class` (`id`, `name`, `teacher_id`, `room_id`, `room`, `period`, `time`, `grade_level`) VALUES
 (10, 'Algebra I', 10, 1, 'Room 101', 'A1', '08:00-08:50', '10'),
 (11, 'Biology Lab', 11, 2, 'Lab 1', 'B2', '10:05-10:55', '11'),
 (12, 'Study Hall Support', 10, 1, 'Library', 'C3', '12:15-01:00', 'All'),
@@ -337,13 +337,13 @@ INSERT INTO `mydb`.`class` (`id`, `name`, `teacher_id`, `room_id`, `room`, `peri
 (15, 'Physics Lab', 14, 2, 'Lab 1', 'F1', '08:55-09:45', '11'),
 (16, 'Reading Workshop', 15, 1, 'Room 101', 'F2', '09:50-10:40', '10');
 
-INSERT INTO `mydb`.`student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES
+INSERT INTO `student_class` (`id`, `grade_level`, `user_iduser`, `class_idclass`) VALUES
 (10, '10', 20, 10),
 (11, '11', 21, 11),
 (12, '10', 22, 12),
 (13, '11', 23, 11);
 
-INSERT INTO `mydb`.`schedule` (`id`, `name`, `decription`, `event_id`, `student_id`, `student_name`, `time`, `period`, `teacher`, `room`, `class_name`) VALUES
+INSERT INTO `schedule` (`id`, `name`, `decription`, `event_id`, `student_id`, `student_name`, `time`, `period`, `teacher`, `room`, `class_name`) VALUES
 (10, 'Math Class', 'Regular class period', NULL, 20, 'Noah Reed', '08:00-08:50', 'A1', 'Maya Patel', 'Room 101', 'Algebra I'),
 (11, 'Independent Period', 'Independent study time', NULL, 20, 'Noah Reed', '09:00-09:45', 'A2', NULL, 'Library', 'Independent Period'),
 (12, 'Study Hall', 'Supervised study hall', NULL, 21, 'Lila Santos', '12:15-01:00', 'C3', 'Jordan Lee', 'Library', 'Study Hall'),
@@ -377,14 +377,14 @@ INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `sta
 (11, 'Lila', 'Santos', 'lila.santos@example.com', 'checked_in', 21, '2026-07-03 10:00:00', NULL, 8.25, 11, 11),
 (12, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 'returning_confirmation', 22, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 15.00, 12, 10);
 
-INSERT INTO `mydb`.`volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
+INSERT INTO `volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
 (12, 10, 23, 12, 'Need an extra volunteer for study hall supervision.', 'pending', 0, NULL, NULL);
 
-INSERT INTO `mydb`.`volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
+INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
 (12, 12, 23, 12, 10, 1, 'requested', 0, NULL, NULL, NULL, NULL, 0.00);
 
-INSERT INTO `mydb`.`volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
+INSERT INTO `volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
 (12, 23, 12, '2026-07-04 12:20:00', NULL, 0.00, NULL, 0, 'pending', 12, 12);
 
-INSERT INTO `mydb`.`volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
+INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
 (13, 'Zara', 'Ali', 'zara.ali@example.com', 'requesting_confirmation', 23, NULL, NULL, 0.00, 12, 10);
