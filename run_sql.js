@@ -1,4 +1,5 @@
 const fs = require('fs');
+require('dotenv').config();
 const mysql = require('mysql2/promise');
 
 (async () => {
@@ -7,6 +8,7 @@ const mysql = require('mysql2/promise');
 
     const connConfig = {
       user: process.env.DB_USER || 'root',
+      database: process.env.DB_NAME || 'mydb',
       multipleStatements: true,
     };
 
