@@ -973,7 +973,39 @@ registerTableRoutes({ collectionPath: '/volunteer_requests', table: 'volunteer_r
 registerTableRoutes({ collectionPath: '/volunteer_assignments', table: 'volunteer_assignments', aliases: ['/volunteer-assignments'] });
 registerTableRoutes({ collectionPath: '/volunteer_hours', table: 'volunteer_hours', aliases: ['/volunteerHours', '/volunteer-hours'] });
 registerTableRoutes({ collectionPath: '/reviews', table: 'reviews', aliases: ['/review', '/api/reviews'] });
-registerTableRoutes({ collectionPath: '/announcements', table: 'announcements', aliases: ['/announcement', '/api/announcements'] });
+
+app.get(['/announcements', '/announcement', '/api/announcements'], async (req, res) => {
+  try {
+    const { sql, values } = buildQuery('announcements', req.query)
+
+    const whereIndex = sql.indexOf(' WHERE ')
+    const whereClause = whereIndex >= 0 ? sql.slice(whereIndex) : ''
+
+    const announcementSql = `
+      SELECT
+        a.*,
+        CONCAT_WS(' ', u.first_name, u.last_name) AS created_by_name
+      FROM \`announcements\` a
+      LEFT JOIN \`user\` u ON u.id = a.created_by
+      ${whereClause}
+      ORDER BY a.created_at DESC, a.id DESC
+    `
+
+    const [rows] = await db.query(announcementSql, values)
+
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      mysqlResult: rows
+    })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({
+      status: 'error',
+      message: err.message
+    })
+  }
+})
 
 app.put('/volunteerHours/:id', requireAdmin, async (req, res) => {
   try {
