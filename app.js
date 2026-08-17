@@ -609,6 +609,27 @@ app.post('/events', requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/clubs', requireAdmin, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const description = String(req.body?.description || '').trim();
+
+    if (!name) {
+      return res.status(400).json({ status: 'error', message: 'Club name is required' });
+    }
+
+    const [result] = await db.query(
+      'INSERT INTO `club` (name, description) VALUES (?, ?)',
+      [name, description || null]
+    );
+
+    res.status(201).json({ status: 'ok', message: 'Club created successfully', clubId: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 function decodeUploadBuffer(payload) {
   if (Buffer.isBuffer(payload)) return payload;
   if (Array.isArray(payload)) return Buffer.from(payload);
@@ -1984,6 +2005,7 @@ app.post('/classes/import-csv', requireAdmin, async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
