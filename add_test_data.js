@@ -76,23 +76,6 @@ async function addTestData() {
       return result.insertId;
     }
 
-    async function ensureVolunteer(studentId, firstName, lastName, email, status, totalHours) {
-      const [rows] = await db.query('SELECT id FROM `volunteers` WHERE email_address = ? LIMIT 1', [email]);
-      if (rows.length) {
-        await db.query(
-          'UPDATE `volunteers` SET first_name = ?, last_name = ?, status = ?, student_id = ?, total_hours = ? WHERE id = ?',
-          [firstName, lastName, status, studentId, totalHours, rows[0].id]
-        );
-        return rows[0].id;
-      }
-
-      const [result] = await db.query(
-        'INSERT INTO `volunteers` (first_name, last_name, email_address, status, student_id, total_hours) VALUES (?, ?, ?, ?, ?, ?)',
-        [firstName, lastName, email, status, studentId, totalHours]
-      );
-      return result.insertId;
-    }
-
     async function ensureVolunteerRequest(payload) {
       const [rows] = await db.query(
         'SELECT id FROM `volunteer_requests` WHERE teacher_id = ? AND student_id = ? AND class_id <=> ? LIMIT 1',
@@ -166,10 +149,6 @@ async function addTestData() {
     await ensureSchedule({ name: 'Study Hall', description: 'Supervised study hall', event_id: null, student_id: studentTwoId, student_name: 'Lila Santos', time: '12:15-01:00', period: 'C3', teacher: 'Jordan Lee', room: 'Library', class_name: 'Study Hall' });
     await ensureSchedule({ name: 'Biology Lab', description: 'Regular class period', event_id: scienceFairId, student_id: studentTwoId, student_name: 'Lila Santos', time: '10:05-10:55', period: 'B2', teacher: 'Jordan Lee', room: 'Lab 1', class_name: 'Biology Lab' });
     await ensureSchedule({ name: 'Orientation', description: 'School opening event', event_id: orientationId, student_id: studentThreeId, student_name: 'Ethan Nguyen', time: '12:30-01:30', period: 'Advisory', teacher: null, room: 'Auditorium', class_name: 'Event' });
-
-    const volunteerOneId = await ensureVolunteer(studentOneId, 'Noah', 'Reed', 'noah.reed@example.com', 'available', 12.50);
-    const volunteerTwoId = await ensureVolunteer(studentTwoId, 'Lila', 'Santos', 'lila.santos@example.com', 'checked_in', 8.25);
-    const volunteerThreeId = await ensureVolunteer(studentThreeId, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 'returning_confirmation', 15.00);
 
     const requestOneId = await ensureVolunteerRequest({
       teacher_id: teacherOneId,
@@ -249,7 +228,7 @@ async function addTestData() {
       volunteer_assignment_id: assignmentTwoId
     });
 
-    console.log('Added test volunteers:', volunteerOneId, volunteerTwoId, volunteerThreeId);
+    console.log('Added test volunteer students:', studentOneId, studentTwoId, studentThreeId);
     console.log('Added test requests:', requestOneId, requestTwoId);
     console.log('Added test assignment:', assignmentOneId, assignmentTwoId);
     console.log('Added classes:', algebraId, biologyId, studyHallId);

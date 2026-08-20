@@ -167,14 +167,7 @@ CREATE TABLE IF NOT EXISTS `club_has_event` (
   
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
-CREATE TABLE IF NOT EXISTS `volunteers` (
-  `id` INT NOT NULL AUTO_INCREMENT,
-  `first_name` VARCHAR(100) NOT NULL,
-  `last_name` VARCHAR(100) NOT NULL,
-  `email_address` VARCHAR(255) NOT NULL,
-  `status` VARCHAR(50) DEFAULT 'active',
-  PRIMARY KEY (`id`)
-);
+
 CREATE TABLE IF NOT EXISTS `reviews` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `user_id` INT NOT NULL,
@@ -251,18 +244,6 @@ CREATE TABLE volunteer_hours (
   INDEX idx_volunteer_hours_assignment (volunteer_assignment_id)
 );
 
-ALTER TABLE volunteers 
-  ADD COLUMN student_id INT NULL,
-  ADD COLUMN check_in DATETIME NULL,
-  ADD COLUMN check_out DATETIME NULL,
-  ADD COLUMN total_hours DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-  ADD COLUMN assigned_class_id INT NULL,
-  ADD COLUMN assigned_teacher_id INT NULL,
-  ADD COLUMN created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-  ADD COLUMN updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  MODIFY COLUMN status VARCHAR(45) NOT NULL DEFAULT 'available';
-
-UPDATE volunteers SET status = 'available' WHERE status NOT IN ('requesting_confirmation', 'checked_in', 'returning_confirmation');
 SET SQL_MODE=@OLD_SQL_MODE;
 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
@@ -307,10 +288,6 @@ ALTER TABLE `class` MODIFY COLUMN `room_id` INT NULL;
 INSERT INTO `announcements` (`title`, `content`, `created_by`) VALUES
 ('Welcome to the New Term', 'Please make sure all attendance records are updated weekly.', 1),
 ('System Maintenance', 'Scheduled downtime this coming Saturday at midnight.', 1);
-INSERT INTO `volunteers` (`first_name`, `last_name`, `email_address`, `status`) VALUES
-('Jane', 'Doe', 'jane.doe@example.com', 'active'),
-('John', 'Smith', 'john.smith@example.com', 'active'),
-('Alice', 'Johnson', 'alice.j@example.com', 'inactive');
 ALTER TABLE `user` 
 ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
 update `user` set password="test";
@@ -359,7 +336,7 @@ INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`,
 (11, 11, 21, 11, 11, 1, 'arrived', 1, 1, '2026-07-01 10:00:00', '2026-07-01 10:05:00', '2026-07-01 11:35:00', 1.50);
 
 INSERT INTO `volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
-(10, 22, 12, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 0.83, 1, 1, 'approved', 11, 11),
+(10, 22, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 0.83, 1, 1, 'approved', 11, 11),
 (11, 21, 11, '2026-07-03 10:00:00', '2026-07-03 11:30:00', 1.50, 1, 1, 'approved', 11, 11),
 (13, 20, 15, '2026-07-04 08:55:00', NULL, 0.00, NULL, 0, 'pending', 13, 13),
 (14, 23, 16, '2026-07-04 09:50:00', '2026-07-04 10:40:00', 0.83, 1, 1, 'approved', 14, 14);
@@ -372,19 +349,8 @@ INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`,
 (13, 13, 20, 15, 14, 1, 'checked_in', 1, 1, '2026-07-04 08:40:00', '2026-07-04 08:55:00', NULL, 0.00),
 (14, 14, 23, 16, 15, 1, 'returning_confirmation', 1, 1, '2026-07-04 09:35:00', '2026-07-04 09:50:00', '2026-07-04 10:40:00', 0.83);
 
-INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
-(10, 'Noah', 'Reed', 'noah.reed@example.com', 'available', 20, NULL, NULL, 12.50, NULL, NULL),
-(11, 'Lila', 'Santos', 'lila.santos@example.com', 'checked_in', 21, '2026-07-03 10:00:00', NULL, 8.25, 11, 11),
-(12, 'Ethan', 'Nguyen', 'ethan.nguyen@example.com', 'returning_confirmation', 22, '2026-07-02 12:10:00', '2026-07-02 13:00:00', 15.00, 12, 10);
-
 INSERT INTO `volunteer_requests` (`id`, `teacher_id`, `student_id`, `class_id`, `message`, `status`, `approved`, `approved_by`, `approved_at`) VALUES
-(12, 10, 23, 12, 'Need an extra volunteer for study hall supervision.', 'pending', 0, NULL, NULL);
+(10, 23, 'Need an extra volunteer for study hall supervision.', 'pending', 0, NULL, NULL);
 
 INSERT INTO `volunteer_assignments` (`id`, `volunteer_request_id`, `student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`, `check_in`, `check_out`, `total_hours`) VALUES
-(12, 12, 23, 12, 10, 1, 'requested', 0, NULL, NULL, NULL, NULL, 0.00);
-
-INSERT INTO `volunteer_hours` (`id`, `student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES
-(12, 23, 12, '2026-07-04 12:20:00', NULL, 0.00, NULL, 0, 'pending', 12, 12);
-
-INSERT INTO `volunteers` (`id`, `first_name`, `last_name`, `email_address`, `status`, `student_id`, `check_in`, `check_out`, `total_hours`, `assigned_class_id`, `assigned_teacher_id`) VALUES
-(13, 'Zara', 'Ali', 'zara.ali@example.com', 'requesting_confirmation', 23, NULL, NULL, 0.00, 12, 10);
+(23, 10, 1, 'requested', 0, NULL, NULL, NULL, NULL, 0.00);

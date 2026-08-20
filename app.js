@@ -46,10 +46,23 @@ const allowedColumns = {
   event: ['id', 'name', 'description', 'room', 'date'],
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
-  volunteers: ['id', 'student_id', 'first_name', 'last_name', 'email_address', 'status', 'check_in', 'check_out', 'total_hours', 'assigned_class_id', 'assigned_teacher_id', 'created_at', 'updated_at'],
   volunteer_requests: ['id', 'teacher_id', 'student_id', 'class_id', 'message', 'status', 'approved', 'approved_by', 'approved_at', 'created_at', 'updated_at'],
   volunteer_assignments: ['id', 'volunteer_request_id', 'student_id', 'class_id', 'teacher_id', 'assigned_by', 'status', 'approved', 'approved_by', 'approved_at', 'check_in', 'check_out', 'total_hours', 'created_at', 'updated_at'],
-  volunteerHours: ['id', 'student_id', 'class_id', 'check_in', 'check_out', 'total_hours', 'approved_by', 'approved', 'approval_status', 'volunteer_request_id', 'volunteer_assignment_id', 'created_at', 'updated_at'],
+  volunteer_hours: [
+  'id',
+  'student_id',
+  'class_id',
+  'check_in',
+  'check_out',
+  'total_hours',
+  'approved_by',
+  'approved',
+  'approval_status',
+  'volunteer_request_id',
+  'volunteer_assignment_id',
+  'created_at',
+  'updated_at'
+  ],
   reviews: ['id', 'user_id', 'rating', 'comment', 'created_at'],
   announcements: ['id', 'title', 'content', 'created_by', 'created_at', 'target_all', 'target_teacher_ids']
 };
@@ -366,16 +379,6 @@ async function ensureVolunteerTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
-    await ensureColumn('volunteers', 'student_id', 'INT NULL');
-    await ensureColumn('volunteers', 'check_in', 'DATETIME NULL');
-    await ensureColumn('volunteers', 'check_out', 'DATETIME NULL');
-    await ensureColumnDefinition('volunteers', 'total_hours', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
-    await ensureColumn('volunteers', 'assigned_class_id', 'INT NULL');
-    await ensureColumn('volunteers', 'assigned_teacher_id', 'INT NULL');
-    await ensureColumn('volunteers', 'created_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP');
-    await ensureColumn('volunteers', 'updated_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
-    await ensureColumnDefinition('volunteers', 'status', "VARCHAR(50) NOT NULL DEFAULT 'available'");
-
     await ensureColumn('volunteer_requests', 'class_id', 'INT NULL');
     await ensureColumnDefinition('volunteer_requests', 'status', "VARCHAR(45) NOT NULL DEFAULT 'pending'");
     await ensureColumnDefinition('volunteer_requests', 'approved', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -407,55 +410,45 @@ async function ensureVolunteerTables() {
   }
 }
 
-async function ensureVolunteerRecord(studentId) {
-  const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `student_id` = ? OR `id` = ? LIMIT 1', [studentId, studentId]);
-  if (rows.length) return rows[0];
-
-  const [userRows] = await db.query('SELECT id, first_name, last_name, email_address FROM `user` WHERE id = ? LIMIT 1', [studentId]);
-  const userRecord = userRows[0];
-  if (!userRecord) return null;
-
-  const [result] = await db.query(
-    'INSERT INTO `volunteers` (`student_id`, `first_name`, `last_name`, `email_address`, `status`, `total_hours`) VALUES (?, ?, ?, ?, ?, 0.00)',
-    [userRecord.id, userRecord.first_name, userRecord.last_name, userRecord.email_address, 'available']
-  );
-
-  const [createdRows] = await db.query('SELECT * FROM `volunteers` WHERE id = ? LIMIT 1', [result.insertId]);
-  return createdRows[0] || null;
-}
-
-async function syncVolunteerStudentLinks() {
-  try {
-    await db.query(
-      "UPDATE `volunteers` v JOIN `user` u ON u.`email_address` = v.`email_address` AND u.`role_id` = 3 SET v.`student_id` = u.`id` WHERE v.`student_id` IS NULL"
-    );
-  } catch (err) {
-    console.error('Unable to sync volunteer student links:', err.message);
-  }
-}
-
 async function syncActiveVolunteerHours() {
   try {
-    const [activeVolunteers] = await db.query(
-      "SELECT `student_id`, `check_in` FROM `volunteers` WHERE `status` = 'checked_in' AND `student_id` IS NOT NULL AND `check_in` IS NOT NULL"
-    );
+    const [activeHours] = await db.query(`
+      SELECT
+        id,
+        student_id,
+        check_in
+      FROM \`volunteer_hours\`
+      WHERE check_in IS NOT NULL
+        AND check_out IS NULL
+      ORDER BY id DESC
+    `);
 
     const now = Date.now();
-    for (const volunteer of activeVolunteers) {
-      const checkInTime = new Date(volunteer.check_in).getTime();
-      if (!Number.isFinite(checkInTime)) continue;
-      const elapsedHours = Math.max((now - checkInTime) / (1000 * 60 * 60), 0);
 
-      const [openHourRows] = await db.query(
-        'SELECT `id` FROM `volunteer_hours` WHERE `student_id` = ? AND `check_in` IS NOT NULL AND `check_out` IS NULL ORDER BY `id` DESC LIMIT 1',
-        [volunteer.student_id]
+    for (const hour of activeHours) {
+      const checkInTime = new Date(hour.check_in).getTime();
+
+      if (!Number.isFinite(checkInTime)) {
+        continue;
+      }
+
+      const elapsedHours = Math.max(
+        (now - checkInTime) / (1000 * 60 * 60),
+        0
       );
 
-      if (!openHourRows.length) continue;
-
       await db.query(
-        'UPDATE `volunteer_hours` SET `total_hours` = ?, `approval_status` = ? WHERE `id` = ?',
-        [elapsedHours.toFixed(2), 'pending', openHourRows[0].id]
+        `
+        UPDATE \`volunteer_hours\`
+        SET
+          total_hours = ?,
+          approval_status = 'pending'
+        WHERE id = ?
+        `,
+        [
+          elapsedHours.toFixed(2),
+          hour.id
+        ]
       );
     }
   } catch (err) {
@@ -925,48 +918,133 @@ registerTableRoutes({ collectionPath: '/clubs', table: 'club', aliases: ['/club'
 registerTableRoutes({ collectionPath: '/events', table: 'event', aliases: ['/event'] });
 app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
   try {
-    await syncVolunteerStudentLinks();
     await syncActiveVolunteerHours();
-    await sendTableRows(res, 'volunteers', req.query);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
 
-app.get('/volunteers/:id', async (req, res) => {
-  try {
-    await syncVolunteerStudentLinks();
-    await syncActiveVolunteerHours();
-    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
-    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
+    const searchTerm = String(req.query?.q || '').trim();
 
-app.get('/volunteer/:id', async (req, res) => {
-  try {
-    await syncVolunteerStudentLinks();
-    await syncActiveVolunteerHours();
-    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
-    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
+    const searchValues = [];
+    let searchClause = '';
 
-app.get('/api/volunteers/:id', async (req, res) => {
-  try {
-    await syncVolunteerStudentLinks();
-    await syncActiveVolunteerHours();
-    const [rows] = await db.query('SELECT * FROM `volunteers` WHERE `id` = ? LIMIT 1', [req.params.id]);
-    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+    if (searchTerm) {
+      searchClause = `
+        AND (
+          u.first_name LIKE ?
+          OR u.last_name LIKE ?
+          OR u.email_address LIKE ?
+          OR CONCAT_WS(' ', u.first_name, u.last_name) LIKE ?
+        )
+      `;
+
+      const likeValue = `%${searchTerm}%`;
+      searchValues.push(likeValue, likeValue, likeValue, likeValue);
+    }
+
+    const [rows] = await db.query(
+      `
+      SELECT
+        u.id,
+        u.id AS student_id,
+        u.first_name,
+        u.last_name,
+        u.email_address,
+
+        COALESCE(
+          (
+            SELECT SUM(vh.total_hours)
+            FROM volunteer_hours vh
+            WHERE vh.student_id = u.id
+              AND vh.approval_status = 'approved'
+          ),
+          0
+        ) AS total_hours,
+
+        va.id AS assignment_id,
+        va.class_id AS assigned_class_id,
+        va.teacher_id AS assigned_teacher_id,
+        va.status AS assignment_status,
+        va.approved AS assignment_approved,
+        va.check_in AS check_in,
+        va.check_out AS check_out,
+        va.total_hours AS assignment_hours
+
+      FROM user u
+
+      LEFT JOIN volunteer_assignments va
+        ON va.id = (
+          SELECT va2.id
+          FROM volunteer_assignments va2
+          WHERE va2.student_id = u.id
+          ORDER BY
+            CASE
+              WHEN va2.status IN (
+                'requested',
+                'requesting_confirmation',
+                'checked_in',
+                'returning_confirmation'
+              ) THEN 0
+              ELSE 1
+            END,
+            va2.id DESC
+          LIMIT 1
+        )
+
+      WHERE u.role_id = 3
+      ${searchClause}
+
+      ORDER BY u.last_name ASC, u.first_name ASC
+      `,
+      searchValues
+    );
+
+    const normalizedRows = rows.map((row) => {
+      const assignmentStatus = String(row.assignment_status || '').trim().toLowerCase();
+
+      let status = 'available';
+
+      if (
+        assignmentStatus === 'checked_in' ||
+        assignmentStatus === 'checked in' ||
+        assignmentStatus === 'currently volunteering'
+      ) {
+        status = 'checked_in';
+      } else if (
+        assignmentStatus === 'returning_confirmation' ||
+        assignmentStatus === 'returning confirmation' ||
+        assignmentStatus === 'pending return' ||
+        assignmentStatus === 'requesting return'
+      ) {
+        status = 'returning_confirmation';
+      } else if (
+        assignmentStatus === 'requesting_confirmation' ||
+        assignmentStatus === 'requesting confirmation' ||
+        assignmentStatus === 'pending arrival' ||
+        assignmentStatus === 'pending_arrival' ||
+        assignmentStatus === 'requested'
+      ) {
+        status = 'requesting_confirmation';
+      }
+
+      return {
+        ...row,
+        name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        status,
+        assigned_class_id: row.assigned_class_id || null,
+        assigned_teacher_id: row.assigned_teacher_id || null,
+        total_hours: Number(row.total_hours || 0).toFixed(2)
+      };
+    });
+
+    res.json({
+      status: 'ok',
+      database: 'connected',
+      mysqlResult: normalizedRows
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
+    console.error('Unable to load students as volunteers:', err);
+    res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
   }
 });
 registerTableRoutes({ collectionPath: '/volunteer_requests', table: 'volunteer_requests', aliases: ['/volunteer-requests'] });
@@ -1046,34 +1124,71 @@ app.put('/volunteerHours/:id', requireAdmin, async (req, res) => {
     values.push(hourId);
     await db.query(`UPDATE \`volunteer_hours\` SET ${updates.join(', ')} WHERE id = ?`, values);
 
-    const [hourRows] = await db.query('SELECT * FROM `volunteer_hours` WHERE id = ? LIMIT 1', [hourId]);
+        const [hourRows] = await db.query(
+      'SELECT * FROM `volunteer_hours` WHERE id = ? LIMIT 1',
+      [hourId]
+    );
+
     const hourRow = hourRows[0] || null;
+
     if (hourRow) {
-      const volunteerRecord = await ensureVolunteerRecord(Number(hourRow.student_id));
-      if (volunteerRecord) {
-        const approvalStatus = String(hourRow.approval_status || req.body?.approval_status || '').toLowerCase();
-        const approvedHours = hourRow.check_in && hourRow.check_out
-          ? Math.max((new Date(hourRow.check_out) - new Date(hourRow.check_in)) / (1000 * 60 * 60), 0)
+      const approvalStatus = String(
+        hourRow.approval_status || req.body?.approval_status || ''
+      ).toLowerCase();
+
+      const approvedHours =
+        hourRow.check_in && hourRow.check_out
+          ? Math.max(
+              (new Date(hourRow.check_out) - new Date(hourRow.check_in)) /
+                (1000 * 60 * 60),
+              0
+            )
           : Number(hourRow.total_hours || 0);
-        const nextTotal = approvalStatus === 'approved'
-          ? (Number(volunteerRecord.total_hours) || 0) + approvedHours
-          : Number(volunteerRecord.total_hours) || 0;
 
+      const [assignmentRows] = await db.query(
+        `
+        SELECT *
+        FROM \`volunteer_assignments\`
+        WHERE volunteer_request_id = ?
+           OR student_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        `,
+        [
+          hourRow.volunteer_request_id || null,
+          hourRow.student_id
+        ]
+      );
+
+      if (assignmentRows[0]) {
         await db.query(
-          'UPDATE `volunteers` SET `status` = ?, `check_in` = NULL, `check_out` = NULL, `assigned_class_id` = NULL, `assigned_teacher_id` = NULL, `total_hours` = ? WHERE id = ?',
-          ['available', nextTotal.toFixed(2), volunteerRecord.id]
-        );
+          `
+          UPDATE \`volunteer_assignments\`
+          SET
+            status = ?,
+            approved = ?,
+            approved_by = ?,
+            approved_at = COALESCE(approved_at, NOW()),
+            check_out = COALESCE(check_out, NOW()),
+            total_hours = ?
+          WHERE id = ?
+          `,
+          [
+            approvalStatus === 'approved'
+              ? 'completed'
+              : 'dismissed',
 
-        const [assignmentRows] = await db.query(
-          'SELECT * FROM `volunteer_assignments` WHERE `volunteer_request_id` = ? OR `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-          [hourRow.volunteer_request_id || null, hourRow.student_id]
+            approvalStatus === 'approved' ? 1 : 0,
+
+            Number.isInteger(Number(req.body.approved_by))
+              ? Number(req.body.approved_by)
+              : null,
+
+            approvedHours.toFixed(2),
+
+            assignmentRows[0].id
+          ]
         );
-        if (assignmentRows[0]) {
-          await db.query(
-            'UPDATE `volunteer_assignments` SET `status` = ?, `approved` = ?, `approved_by` = ?, `approved_at` = COALESCE(`approved_at`, NOW()), `check_out` = COALESCE(`check_out`, NOW()), `total_hours` = ? WHERE `id` = ?',
-            [approvalStatus === 'approved' ? 'completed' : 'dismissed', approvalStatus === 'approved' ? 1 : 0, Number.isInteger(Number(req.body.approved_by)) ? Number(req.body.approved_by) : null, approvedHours.toFixed(2), assignmentRows[0].id]
-          )
-        }
       }
     }
 
@@ -1543,25 +1658,7 @@ app.post('/api/request-reset', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Database error' });
   }
 });
-app.get('/api/volunteers', async (req, res) => {
-  try {
-    const [rows] = await db.query('SELECT * FROM volunteers');
-    res.json({ mysqlResult: rows });
-  } catch (err) {
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
-// Add this block to your app.js
-app.get('/volunteers', async (req, res) => {
-  try {
-    // Ensure 'volunteers' matches your actual database table name exactly
-    const [rows] = await db.query('SELECT * FROM volunteers'); 
-    res.json(rows); // Try sending the rows directly if your client expects a raw array
-  } catch (err) {
-    console.error('Error fetching volunteers:', err);
-    res.status(500).json({ status: 'error', message: err.message });
-  }
-});
+
 app.get('/api/class-students', (req, res) => {
   const classId = req.query.class_id;
   const query = `
@@ -1614,226 +1711,718 @@ app.get('/classes', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+app.post('/volunteerHours/send', async (req, res) => {
+  try {
+    const studentId = Number(req.body?.student_id);
+    const teacherId = Number(req.body?.teacher_id);
+    const classId = Number(req.body?.class_id);
+
+    if (
+      !Number.isInteger(studentId) ||
+      studentId <= 0 ||
+      !Number.isInteger(teacherId) ||
+      teacherId <= 0 ||
+      !Number.isInteger(classId) ||
+      classId <= 0
+    ) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'student_id, teacher_id, and class_id are required'
+      });
+    }
+
+    // Make sure the selected volunteer is an actual Student.
+    const [studentRows] = await db.query(
+      `
+      SELECT
+        id,
+        first_name,
+        last_name,
+        email_address,
+        role_id
+      FROM \`user\`
+      WHERE id = ?
+        AND role_id = 3
+      LIMIT 1
+      `,
+      [studentId]
+    );
+
+    if (!studentRows.length) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student volunteer not found'
+      });
+    }
+
+    const student = studentRows[0];
+
+    // Make sure the target teacher exists.
+    const [teacherRows] = await db.query(
+      `
+      SELECT
+        id,
+        first_name,
+        last_name,
+        email_address,
+        role_id
+      FROM \`user\`
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [teacherId]
+    );
+
+    if (!teacherRows.length) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Teacher not found'
+      });
+    }
+
+    // Make sure the student isn't already assigned to an active
+    // volunteer assignment.
+    const [activeAssignmentRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_assignments\`
+      WHERE student_id = ?
+        AND status IN (
+          'requested',
+          'requesting_confirmation',
+          'checked_in',
+          'returning_confirmation'
+        )
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [studentId]
+    );
+
+    if (activeAssignmentRows.length) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This student already has an active volunteer assignment',
+        assignment: activeAssignmentRows[0]
+      });
+    }
+
+    // Create the assignment.
+    const [assignmentResult] = await db.query(
+      `
+      INSERT INTO \`volunteer_assignments\`
+      (
+        volunteer_request_id,
+        student_id,
+        class_id,
+        teacher_id,
+        assigned_by,
+        status,
+        approved,
+        approved_by,
+        approved_at,
+        check_in,
+        check_out,
+        total_hours
+      )
+      VALUES (
+        NULL,
+        ?,
+        ?,
+        ?,
+        ?,
+        'requesting_confirmation',
+        1,
+        ?,
+        NOW(),
+        NULL,
+        NULL,
+        0.00
+      )
+      `,
+      [
+        studentId,
+        classId,
+        teacherId,
+        req.body?.assigned_by
+          ? Number(req.body.assigned_by)
+          : null,
+        req.body?.assigned_by
+          ? Number(req.body.assigned_by)
+          : null
+      ]
+    );
+
+    const assignmentId = assignmentResult.insertId;
+
+    return res.json({
+      status: 'ok',
+      message: 'Student sent to teacher successfully',
+
+      student: {
+        id: student.id,
+        student_id: student.id,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        email_address: student.email_address
+      },
+
+      assignment: {
+        id: assignmentId,
+        student_id: studentId,
+        class_id: classId,
+        teacher_id: teacherId,
+        status: 'requesting_confirmation',
+        approved: 1,
+        total_hours: '0.00'
+      }
+    });
+  } catch (err) {
+    console.error('Send volunteer to teacher error:', err);
+
+    return res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
+  }
+});
 app.post('/volunteerHours/check-in', async (req, res) => {
   try {
-    const requestedVolunteerOrStudentId = Number(req.body?.student_id);
-    if (!requestedVolunteerOrStudentId) {
-      return res.status(400).json({ status: 'error', message: 'student_id is required' });
+    const requestedStudentId = Number(
+      req.body?.student_id ??
+      req.body?.volunteer_id ??
+      req.body?.id
+    );
+
+    if (!Number.isInteger(requestedStudentId) || requestedStudentId <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A valid student ID is required'
+      });
     }
 
-    const volunteerRecord = await ensureVolunteerRecord(requestedVolunteerOrStudentId);
-    if (!volunteerRecord) {
-      return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
+    // The volunteer is now the actual user with role_id = 3.
+    const [studentRows] = await db.query(
+      `
+      SELECT
+        id,
+        first_name,
+        last_name,
+        email_address,
+        role_id
+      FROM \`user\`
+      WHERE id = ?
+        AND role_id = 3
+      LIMIT 1
+      `,
+      [requestedStudentId]
+    );
+
+    if (!studentRows.length) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student volunteer not found'
+      });
     }
 
-    const volunteerRowId = Number(volunteerRecord.id);
-    const studentId = Number(volunteerRecord.student_id) || requestedVolunteerOrStudentId;
+    const student = studentRows[0];
 
-    const { status: currentStatus, check_in, check_out, total_hours: existingHours } = volunteerRecord;
-    const role = getUserRole(req).toLowerCase();
-    const actorId = req.body?.user_id !== undefined && req.body?.user_id !== null && String(req.body?.user_id).trim() !== ''
-      ? Number(req.body.user_id)
-      : null;
+    const [assignmentRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_assignments\`
+      WHERE student_id = ?
+        AND status IN (
+          'requesting_confirmation',
+          'requested'
+        )
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [student.id]
+    );
+    const assignment = assignmentRows[0] || null;
 
-    // Teacher confirms the volunteer has arrived
-    if (currentStatus === 'requesting_confirmation') {
-      if (role !== 'teacher') {
-        return res.status(403).json({ status: 'error', message: 'Teacher access required' });
-      }
+    if (!assignment) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This student does not have a volunteer assignment'
+      });
+    }
 
-      const [assignmentRows] = await db.query(
-        'SELECT * FROM `volunteer_assignments` WHERE `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-        [studentId]
-      );
-      const activeAssignment = assignmentRows[0] || null;
-      const volunteerClassId = activeAssignment?.class_id || volunteerRecord.assigned_class_id || null;
-      const nowValue = new Date();
+    const currentStatus = String(
+      assignment.status || ''
+    ).toLowerCase();
+
+    /*
+      The student must be in the confirmation state before
+      the teacher can check them in.
+    */
+    if (!['requesting_confirmation', 'requested'].includes(currentStatus)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Cannot check in from status "${assignment.status}"`
+      });
+    }
+
+    const checkInTime = new Date();
+
+    // Prevent multiple active volunteer_hours records
+    // for the same student.
+    const [activeHourRows] = await db.query(
+      `
+      SELECT id
+      FROM \`volunteer_hours\`
+      WHERE student_id = ?
+        AND check_in IS NOT NULL
+        AND check_out IS NULL
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [student.id]
+    );
+
+    let volunteerHourId;
+
+    if (activeHourRows.length) {
+      volunteerHourId = activeHourRows[0].id;
 
       await db.query(
-        "UPDATE `volunteers` SET `status` = 'checked_in', `check_in` = NOW(), `check_out` = NULL WHERE id = ?",
-        [volunteerRowId]
+        `
+        UPDATE \`volunteer_hours\`
+        SET
+          check_in = ?,
+          check_out = NULL,
+          total_hours = 0.00,
+          approval_status = 'pending',
+          approved = 0
+        WHERE id = ?
+        `,
+        [checkInTime, volunteerHourId]
+      );
+    } else {
+      const [hourResult] = await db.query(
+        `
+        INSERT INTO \`volunteer_hours\`
+        (
+          student_id,
+          class_id,
+          check_in,
+          check_out,
+          total_hours,
+          approved,
+          approval_status,
+          volunteer_request_id,
+          volunteer_assignment_id
+        )
+        VALUES (?, ?, ?, NULL, 0.00, 0, 'pending', ?, ?)
+        `,
+        [
+          student.id,
+          assignment.class_id,
+          checkInTime,
+          assignment.volunteer_request_id || null,
+          assignment.id
+        ]
       );
 
-      if (activeAssignment) {
-        await db.query(
-          'UPDATE `volunteer_assignments` SET `status` = ?, `check_in` = ?, `approved` = 1, `approved_at` = COALESCE(`approved_at`, NOW()) WHERE `id` = ?',
-          ['checked_in', nowValue, activeAssignment.id]
-        );
-      }
-
-      if (volunteerClassId) {
-        const [pendingHourRows] = await db.query(
-          'SELECT `id` FROM `volunteer_hours` WHERE `student_id` = ? AND `class_id` = ? AND `check_in` IS NULL AND `check_out` IS NULL ORDER BY `id` DESC LIMIT 1',
-          [studentId, volunteerClassId]
-        );
-
-        if (pendingHourRows.length) {
-          await db.query(
-            'UPDATE `volunteer_hours` SET `check_in` = ?, `approval_status` = ?, `volunteer_request_id` = COALESCE(`volunteer_request_id`, ?), `volunteer_assignment_id` = COALESCE(`volunteer_assignment_id`, ?) WHERE `id` = ?',
-            [nowValue, 'pending', activeAssignment?.volunteer_request_id || null, activeAssignment?.id || null, pendingHourRows[0].id]
-          );
-        } else {
-          await db.query(
-            'INSERT INTO `volunteer_hours` (`student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES (?, ?, ?, NULL, 0.00, NULL, 0, ?, ?, ?)',
-            [studentId, volunteerClassId, nowValue, 'pending', activeAssignment?.volunteer_request_id || null, activeAssignment?.id || null]
-          );
-        }
-      }
-
-      return res.json({ status: 'ok', message: 'Checked in successfully' });
+      volunteerHourId = hourResult.insertId;
     }
 
-    // Admin confirms the volunteer has returned -> finalize hours
-    if (currentStatus === 'returning_confirmation') {
-      if (role !== 'admin') {
-        return res.status(403).json({ status: 'error', message: 'Admin access required' });
-      }
+    // Update the assignment itself.
+    await db.query(
+      `
+      UPDATE \`volunteer_assignments\`
+      SET
+        status = 'checked_in',
+        check_in = ?,
+        check_out = NULL,
+        total_hours = 0.00
+      WHERE id = ?
+      `,
+      [checkInTime, assignment.id]
+    );
 
-      const [hourRows] = await db.query(
-        'SELECT * FROM `volunteer_hours` WHERE `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-        [studentId]
-      );
-      const hourRow = hourRows[0] || null;
-      let hoursWorked = 0;
-      if (hourRow?.check_in && hourRow?.check_out) {
-        const diffMs = new Date(hourRow.check_out) - new Date(hourRow.check_in);
-        hoursWorked = diffMs / (1000 * 60 * 60);
-      } else if (check_in && check_out) {
-        const diffMs = new Date(check_out) - new Date(check_in);
-        hoursWorked = diffMs / (1000 * 60 * 60);
-      }
-      const newTotal = (Number(existingHours) || 0) + hoursWorked;
-
-      if (hourRow) {
-        await db.query(
-          'UPDATE `volunteer_hours` SET `approved` = 1, `approval_status` = ?, `approved_by` = ?, `total_hours` = ?, `check_out` = COALESCE(`check_out`, NOW()) WHERE `id` = ?',
-          ['approved', actorId, hoursWorked.toFixed(2), hourRow.id]
-        );
-      }
-
-      const [assignmentRows] = await db.query(
-        'SELECT * FROM `volunteer_assignments` WHERE `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-        [studentId]
-      );
-      if (assignmentRows[0]) {
-        await db.query(
-          'UPDATE `volunteer_assignments` SET `status` = ?, `approved` = 1, `approved_by` = ?, `approved_at` = COALESCE(`approved_at`, NOW()), `check_out` = COALESCE(`check_out`, NOW()), `total_hours` = ? WHERE `id` = ?',
-          ['completed', actorId, hoursWorked.toFixed(2), assignmentRows[0].id]
-        );
-      }
-
-      await db.query(
-        "UPDATE `volunteers` SET `status` = 'available', `total_hours` = ?, `check_in` = NULL, `check_out` = NULL, `assigned_class_id` = NULL, `assigned_teacher_id` = NULL WHERE id = ?",
-        [newTotal.toFixed(2), volunteerRowId]
-      );
-      return res.json({ status: 'ok', message: 'Return confirmed', hoursAdded: hoursWorked.toFixed(2) });
-    }
-
-    return res.status(400).json({ status: 'error', message: `Cannot check in from status "${currentStatus}"` });
+    return res.json({
+      status: 'ok',
+      message: 'Volunteer checked in successfully',
+      student: {
+        id: student.id,
+        student_id: student.id,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        email_address: student.email_address
+      },
+      volunteer_assignment_id: assignment.id,
+      volunteer_hours_id: volunteerHourId,
+      check_in: checkInTime,
+      check_out: null,
+      total_hours: '0.00'
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
+    console.error('Volunteer check-in error:', err);
+
+    return res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
   }
 });
 
 app.post('/volunteerHours/check-out', async (req, res) => {
   try {
-    const requestedVolunteerOrStudentId = Number(req.body?.student_id);
-    if (!requestedVolunteerOrStudentId) {
-      return res.status(400).json({ status: 'error', message: 'student_id is required' });
+    const requestedStudentId = Number(
+      req.body?.student_id ??
+      req.body?.volunteer_id ??
+      req.body?.id
+    );
+
+    if (!Number.isInteger(requestedStudentId) || requestedStudentId <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A valid student ID is required'
+      });
     }
 
-    const volunteerRecord = await ensureVolunteerRecord(requestedVolunteerOrStudentId);
-    if (!volunteerRecord) {
-      return res.status(404).json({ status: 'error', message: 'Volunteer not found' });
+    // Confirm this is an actual Student user.
+    const [studentRows] = await db.query(
+      `
+      SELECT
+        id,
+        first_name,
+        last_name,
+        email_address,
+        role_id
+      FROM \`user\`
+      WHERE id = ?
+        AND role_id = 3
+      LIMIT 1
+      `,
+      [requestedStudentId]
+    );
+
+    if (!studentRows.length) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student volunteer not found'
+      });
     }
 
-    const volunteerRowId = Number(volunteerRecord.id);
-    const studentId = Number(volunteerRecord.student_id) || requestedVolunteerOrStudentId;
+    const student = studentRows[0];
 
-    const currentStatus = volunteerRecord.status;
-    const role = getUserRole(req).toLowerCase();
+    // Find the student's current assignment.
+    const [assignmentRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_assignments\`
+      WHERE student_id = ?
+        AND status = 'checked_in'
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [student.id]
+    );
 
-    // Admin sends the volunteer to a specific class
-    if (currentStatus === 'available' || currentStatus === null || currentStatus === '') {
-      if (role !== 'admin') {
-        return res.status(403).json({ status: 'error', message: 'Admin access required' });
-      }
+    const assignment = assignmentRows[0] || null;
 
-      const classId = Number(req.body?.class_id);
-      if (!classId) {
-        return res.status(400).json({ status: 'error', message: 'class_id is required to send a volunteer to a class' });
-      }
-
-      const [classRows] = await db.query('SELECT id, teacher_id FROM `class` WHERE id = ?', [classId]);
-      if (!classRows.length) {
-        return res.status(400).json({ status: 'error', message: 'Class not found' });
-      }
-
-      const actingAdminId = req.body?.user_id !== undefined && req.body?.user_id !== null && String(req.body?.user_id).trim() !== ''
-        ? Number(req.body.user_id)
-        : null;
-
-      const [assignmentResult] = await db.query(
-        'INSERT INTO `volunteer_assignments` (`student_id`, `class_id`, `teacher_id`, `assigned_by`, `status`, `approved`, `approved_by`, `approved_at`) VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)',
-        [studentId, classId, classRows[0].teacher_id, Number.isInteger(actingAdminId) ? actingAdminId : null, 'requested']
-      );
-
-      await db.query(
-        'INSERT INTO `volunteer_hours` (`student_id`, `class_id`, `check_in`, `check_out`, `total_hours`, `approved_by`, `approved`, `approval_status`, `volunteer_request_id`, `volunteer_assignment_id`) VALUES (?, ?, NULL, NULL, 0.00, NULL, 0, ?, NULL, ?)',
-        [studentId, classId, 'pending', assignmentResult.insertId]
-      );
-
-      await db.query(
-        "UPDATE `volunteers` SET `status` = 'requesting_confirmation', `assigned_class_id` = ?, `assigned_teacher_id` = ? WHERE id = ?",
-        [classId, classRows[0].teacher_id, volunteerRowId]
-      );
-      return res.json({ status: 'ok', message: 'Requesting teacher confirmation' });
+    if (!assignment) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This student does not have a volunteer assignment'
+      });
     }
 
-    // Teacher releases the volunteer back to admin
-    if (currentStatus === 'checked_in') {
-      if (role !== 'teacher' && role !== 'admin') {
-        return res.status(403).json({ status: 'error', message: 'Teacher access required' });
-      }
+    const currentStatus = String(
+      assignment.status || ''
+    ).toLowerCase();
 
-      const [hourRows] = await db.query(
-        'SELECT * FROM `volunteer_hours` WHERE `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-        [studentId]
-      );
-      const hourRow = hourRows[0] || null;
-      const checkOutTime = new Date();
-      const hoursWorked = hourRow?.check_in ? Math.max((checkOutTime - new Date(hourRow.check_in)) / (1000 * 60 * 60), 0) : 0;
-
-      if (hourRow) {
-        await db.query(
-          'UPDATE `volunteer_hours` SET `check_out` = ?, `total_hours` = ?, `approval_status` = ? WHERE `id` = ?',
-          [checkOutTime, hoursWorked.toFixed(2), 'pending', hourRow.id]
-        );
-      }
-
-      const [assignmentRows] = await db.query(
-        'SELECT * FROM `volunteer_assignments` WHERE `student_id` = ? ORDER BY `id` DESC LIMIT 1',
-        [studentId]
-      );
-      if (assignmentRows[0]) {
-        await db.query(
-          'UPDATE `volunteer_assignments` SET `status` = ?, `check_out` = ?, `total_hours` = ? WHERE `id` = ?',
-          ['returning_confirmation', checkOutTime, hoursWorked.toFixed(2), assignmentRows[0].id]
-        );
-      }
-
-      await db.query(
-        "UPDATE `volunteers` SET `status` = 'returning_confirmation', `check_out` = NOW() WHERE id = ?",
-        [volunteerRowId]
-      );
-      return res.json({ status: 'ok', message: 'Requesting admin confirmation' });
+    if (currentStatus !== 'checked_in') {
+      return res.status(400).json({
+        status: 'error',
+        message: `Cannot check out from status "${assignment.status}"`
+      });
     }
 
-    return res.status(400).json({ status: 'error', message: `Cannot check out from status "${currentStatus}"` });
+    /*
+      Find the active volunteer_hours record.
+      This is now the authoritative time record.
+    */
+    const [hourRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_hours\`
+      WHERE student_id = ?
+        AND check_in IS NOT NULL
+        AND check_out IS NULL
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [student.id]
+    );
+
+    const hourRow = hourRows[0] || null;
+
+    if (!hourRow) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'No active volunteer check-in was found for this student'
+      });
+    }
+
+    const checkOutTime = new Date();
+
+    const checkInTime = new Date(hourRow.check_in);
+
+    if (Number.isNaN(checkInTime.getTime())) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'The volunteer check-in time is invalid'
+      });
+    }
+
+    const hoursWorked = Math.max(
+      (checkOutTime.getTime() - checkInTime.getTime()) /
+        (1000 * 60 * 60),
+      0
+    );
+
+    const formattedHours = hoursWorked.toFixed(2);
+
+    // Finalize the current volunteer_hours session.
+    await db.query(
+      `
+      UPDATE \`volunteer_hours\`
+      SET
+        check_out = ?,
+        total_hours = ?,
+        approval_status = 'pending',
+        approved = 0
+      WHERE id = ?
+      `,
+      [
+        checkOutTime,
+        formattedHours,
+        hourRow.id
+      ]
+    );
+
+    /*
+      Do NOT mark the assignment completed yet.
+
+      The existing workflow requires admin confirmation
+      after the teacher checks the student out.
+    */
+    await db.query(
+      `
+      UPDATE \`volunteer_assignments\`
+      SET
+        status = 'returning_confirmation',
+        check_out = ?,
+        total_hours = ?
+      WHERE id = ?
+      `,
+      [
+        checkOutTime,
+        formattedHours,
+        assignment.id
+      ]
+    );
+
+    return res.json({
+      status: 'ok',
+      message: 'Requesting admin confirmation',
+      student: {
+        id: student.id,
+        student_id: student.id,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        email_address: student.email_address
+      },
+      volunteer_assignment_id: assignment.id,
+      volunteer_hours_id: hourRow.id,
+      check_in: hourRow.check_in,
+      check_out: checkOutTime,
+      total_hours: formattedHours,
+      approval_status: 'pending'
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', message: err.message });
+    console.error('Volunteer check-out error:', err);
+
+    return res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
+  }
+});
+app.post('/volunteerHours/confirm-return', async (req, res) => {
+  try {
+    const studentId = Number(
+      req.body?.student_id ??
+      req.body?.volunteer_id ??
+      req.body?.id
+    );
+
+    if (!Number.isInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A valid student ID is required'
+      });
+    }
+
+    // Confirm that this is an actual Student user.
+    const [studentRows] = await db.query(
+      `
+      SELECT
+        id,
+        first_name,
+        last_name,
+        email_address,
+        role_id
+      FROM \`user\`
+      WHERE id = ?
+        AND role_id = 3
+      LIMIT 1
+      `,
+      [studentId]
+    );
+
+    if (!studentRows.length) {
+      return res.status(404).json({
+        status: 'error',
+        message: 'Student volunteer not found'
+      });
+    }
+
+    const student = studentRows[0];
+
+    // Find the latest assignment waiting for admin confirmation.
+    const [assignmentRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_assignments\`
+      WHERE student_id = ?
+        AND status = 'returning_confirmation'
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [studentId]
+    );
+
+    const assignment = assignmentRows[0] || null;
+
+    if (!assignment) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This student is not waiting for return confirmation'
+      });
+    }
+
+    // Find the corresponding volunteer-hours record.
+    const [hourRows] = await db.query(
+      `
+      SELECT *
+      FROM \`volunteer_hours\`
+      WHERE student_id = ?
+        AND volunteer_assignment_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [
+        studentId,
+        assignment.id
+      ]
+    );
+
+    const hourRow = hourRows[0] || null;
+
+    /*
+      If a completed check-out exists, preserve the calculated
+      hours. Otherwise use the assignment's total_hours.
+    */
+    const finalHours = hourRow
+      ? Number(hourRow.total_hours || 0).toFixed(2)
+      : Number(assignment.total_hours || 0).toFixed(2);
+
+    // Mark the assignment completed.
+    await db.query(
+      `
+      UPDATE \`volunteer_assignments\`
+      SET
+        status = 'completed',
+        approved = 1,
+        approved_by = ?,
+        approved_at = NOW(),
+        total_hours = ?
+      WHERE id = ?
+      `,
+      [
+        req.body?.approved_by
+          ? Number(req.body.approved_by)
+          : null,
+        finalHours,
+        assignment.id
+      ]
+    );
+
+    // Mark the hours record approved as well.
+    if (hourRow) {
+      await db.query(
+        `
+        UPDATE \`volunteer_hours\`
+        SET
+          approved = 1,
+          approved_by = ?,
+          approval_status = 'approved',
+          total_hours = ?
+        WHERE id = ?
+        `,
+        [
+          req.body?.approved_by
+            ? Number(req.body.approved_by)
+            : null,
+          finalHours,
+          hourRow.id
+        ]
+      );
+    }
+
+    return res.json({
+      status: 'ok',
+      message: 'Volunteer return confirmed successfully',
+
+      student: {
+        id: student.id,
+        student_id: student.id,
+        first_name: student.first_name,
+        last_name: student.last_name,
+        email_address: student.email_address
+      },
+
+      assignment: {
+        id: assignment.id,
+        student_id: student.id,
+        class_id: assignment.class_id,
+        teacher_id: assignment.teacher_id,
+        status: 'completed',
+        total_hours: finalHours
+      },
+
+      volunteer_hours: hourRow
+        ? {
+            id: hourRow.id,
+            total_hours: finalHours,
+            approved: 1,
+            approval_status: 'approved'
+          }
+        : null
+    });
+  } catch (err) {
+    console.error('Confirm volunteer return error:', err);
+
+    return res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
   }
 });
 app.post('/reviews', async (req, res) => {
@@ -1847,136 +2436,7 @@ app.post('/reviews', async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
-//// 1. Admin sends volunteer to a class
-app.post('/volunteers/:id/send', async (req, res) => {
-  const { id } = req.params;
-  const { teacher_id, class_id } = req.body;
-  try {
-    const [volunteerRows] = await db.query('SELECT student_id FROM volunteers WHERE id = ?', [id]);
-    if (!volunteerRows || !volunteerRows.length) {
-      return res.status(404).json({ error: 'Volunteer not found' });
-    }
-    const studentId = volunteerRows[0].student_id;
 
-    await db.query(
-      `UPDATE volunteers 
-       SET status = 'requesting_confirmation', 
-           assigned_teacher_id = ?, 
-           assigned_class_id = ? 
-       WHERE id = ?`,
-      [teacher_id, class_id, id]
-    );
-
-    await db.query(
-      `INSERT INTO \`volunteer_hours\` (student_id, class_id, approval_status) 
-       VALUES (?, ?, 'pending')`,
-      [studentId, class_id]
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 2. Teacher confirms arrival
-app.post('/volunteers/:id/arrive', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const [volunteerRows] = await db.query('SELECT student_id, assigned_class_id FROM volunteers WHERE id = ?', [id]);
-    if (!volunteerRows || !volunteerRows.length) {
-      return res.status(404).json({ error: 'Volunteer not found' });
-    }
-    const { student_id, assigned_class_id } = volunteerRows[0];
-
-    await db.query(
-      `UPDATE volunteers 
-       SET status = 'Currently Volunteering', 
-           check_in = NOW() 
-       WHERE id = ?`,
-      [id]
-    );
-
-    await db.query(
-      `UPDATE \`volunteer_hours\` 
-       SET check_in = NOW() 
-       WHERE student_id = ? AND class_id = ? AND check_in IS NULL`,
-      [student_id, assigned_class_id]
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 3. Teacher sends back to class (Updated: removed strict check_in requirement so it can be triggered whenever)
-app.post('/volunteers/:id/return', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const [rows] = await db.query('SELECT check_in, student_id FROM volunteers WHERE id = ?', [id]);
-    if (!rows || !rows.length) {
-      return res.status(404).json({ error: 'Volunteer not found' });
-    }
-
-    const checkInTime = rows[0].check_in ? new Date(rows[0].check_in) : null;
-    const studentId = rows[0].student_id;
-    
-    let hoursElapsed = 0;
-    if (checkInTime) {
-      const now = new Date();
-      hoursElapsed = (now - checkInTime) / (1000 * 60 * 60);
-    }
-
-    await db.query(
-      `UPDATE volunteers 
-       SET status = 'requesting_confirmation', 
-           check_out = NOW(), 
-           total_hours = COALESCE(total_hours, 0) + ?,
-           check_in = NULL
-       WHERE id = ?`,
-      [hoursElapsed, id]
-    );
-
-    await db.query(
-      `UPDATE \`volunteer_hours\` 
-       SET check_out = NOW(), 
-           hours = ?, 
-           total_hours = (SELECT total_hours FROM volunteers WHERE id = ?),
-           approval_status = 'pending'
-       WHERE student_id = ? AND check_out IS NULL`,
-      [hoursElapsed, id, studentId]
-    );
-
-    res.json({ success: true, hoursAdded: hoursElapsed });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 4. Admin confirms return
-app.post('/volunteers/:id/confirm-return', async (req, res) => {
-  const { id } = req.params;
-  try {
-    await db.query(
-      `UPDATE volunteers 
-       SET status = 'available', 
-           assigned_class_id = NULL, 
-           assigned_teacher_id = NULL,
-           check_in = NULL, 
-           check_out = NULL 
-       WHERE id = ?`,
-      [id]
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
 app.post('/classes/import-csv', requireAdmin, async (req, res) => {
   try {
     const fileBuffer = decodeUploadBuffer(req.body?.file_data);
