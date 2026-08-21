@@ -285,6 +285,22 @@ ALTER TABLE `class` DROP PRIMARY KEY, ADD PRIMARY KEY (`id`);
 ALTER TABLE `class` MODIFY COLUMN `teacher_id` INT NULL;
 ALTER TABLE `class` MODIFY COLUMN `room_id` INT NULL;
 
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- Move Teacher (currently id=1) to a temporary holding spot
+UPDATE role SET id = 99 WHERE id = 1;
+UPDATE user SET role_id = 99 WHERE role_id = 1;
+
+-- Move Admin (currently id=2) into the now-empty id=1
+UPDATE role SET id = 1 WHERE id = 2;
+UPDATE user SET role_id = 1 WHERE role_id = 2;
+
+-- Move Teacher from the temporary spot (99) into id=2
+UPDATE role SET id = 2 WHERE id = 99;
+UPDATE user SET role_id = 2 WHERE role_id = 99;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
 INSERT INTO `announcements` (`title`, `content`, `created_by`) VALUES
 ('Welcome to the New Term', 'Please make sure all attendance records are updated weekly.', 1),
 ('System Maintenance', 'Scheduled downtime this coming Saturday at midnight.', 1);
