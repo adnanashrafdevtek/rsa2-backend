@@ -379,6 +379,19 @@ async function ensureVolunteerTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
 
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS \`volunteer_hour_adjustments\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`student_id\` INT NOT NULL,
+        \`hours_delta\` DECIMAL(10,2) NOT NULL,
+        \`note\` VARCHAR(255) NULL,
+        \`created_by\` INT NULL,
+        \`created_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        INDEX \`idx_volunteer_adjustments_student\` (\`student_id\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+
     await ensureColumn('volunteer_requests', 'class_id', 'INT NULL');
     await ensureColumnDefinition('volunteer_requests', 'status', "VARCHAR(45) NOT NULL DEFAULT 'pending'");
     await ensureColumnDefinition('volunteer_requests', 'approved', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -580,6 +593,58 @@ app.put('/users/:id', requireAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.delete('/users/:id', requireAdmin, async (req, res) => {
+  const connection = await db.getConnection();
+
+  try {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ status: 'error', message: 'A valid user ID is required' });
+    }
+
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.query(
+      'SELECT id, role_id FROM `user` WHERE id = ? LIMIT 1',
+      [userId]
+    );
+    if (!userRows.length) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'User not found' });
+    }
+
+    if (Number(userRows[0].role_id) === 1) {
+      const [adminRows] = await connection.query('SELECT COUNT(*) AS count FROM `user` WHERE role_id = 1');
+      if (Number(adminRows[0].count) <= 1) {
+        await connection.rollback();
+        return res.status(400).json({ status: 'error', message: 'The last admin user cannot be deleted' });
+      }
+    }
+
+    await connection.query('UPDATE `class` SET teacher_id = NULL WHERE teacher_id = ?', [userId]);
+    await connection.query('UPDATE `announcements` SET created_by = NULL WHERE created_by = ?', [userId]);
+    await connection.query('DELETE FROM `student_class` WHERE user_iduser = ?', [userId]);
+    await connection.query('DELETE FROM `message` WHERE sender_id = ? OR receiver_id = ?', [userId, userId]);
+    await connection.query('DELETE FROM `schedule` WHERE student_id = ?', [userId]);
+    await connection.query('DELETE FROM `user_schedules` WHERE user_id = ?', [userId]);
+    await connection.query('DELETE FROM `attendance` WHERE student_id = ? OR teacher_id = ? OR marked_by = ?', [userId, userId, userId]);
+    await connection.query('DELETE FROM `volunteer_hour_adjustments` WHERE student_id = ? OR created_by = ?', [userId, userId]);
+    await connection.query('DELETE FROM `volunteer_hours` WHERE student_id = ? OR approved_by = ?', [userId, userId]);
+    await connection.query('DELETE FROM `volunteer_assignments` WHERE student_id = ? OR teacher_id = ? OR assigned_by = ? OR approved_by = ?', [userId, userId, userId, userId]);
+    await connection.query('DELETE FROM `volunteer_requests` WHERE student_id = ? OR teacher_id = ? OR approved_by = ?', [userId, userId, userId]);
+    await connection.query('DELETE FROM `user` WHERE id = ?', [userId]);
+
+    await connection.commit();
+    res.json({ status: 'ok', message: 'User deleted successfully', userId });
+  } catch (err) {
+    await connection.rollback();
+    console.error('Delete user error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -958,6 +1023,15 @@ app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
           0
         ) AS total_hours,
 
+        COALESCE(
+          (
+            SELECT SUM(vha.hours_delta)
+            FROM volunteer_hour_adjustments vha
+            WHERE vha.student_id = u.id
+          ),
+          0
+        ) AS manual_hours,
+
         va.id AS assignment_id,
         va.class_id AS assigned_class_id,
         va.teacher_id AS assigned_teacher_id,
@@ -1030,7 +1104,8 @@ app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
         status,
         assigned_class_id: row.assigned_class_id || null,
         assigned_teacher_id: row.assigned_teacher_id || null,
-        total_hours: Number(row.total_hours || 0).toFixed(2)
+        total_hours: (Number(row.total_hours || 0) + Number(row.manual_hours || 0)).toFixed(2),
+        manual_hours: Number(row.manual_hours || 0).toFixed(2)
       };
     });
 
@@ -1051,6 +1126,56 @@ registerTableRoutes({ collectionPath: '/volunteer_requests', table: 'volunteer_r
 registerTableRoutes({ collectionPath: '/volunteer_assignments', table: 'volunteer_assignments', aliases: ['/volunteer-assignments'] });
 registerTableRoutes({ collectionPath: '/volunteer_hours', table: 'volunteer_hours', aliases: ['/volunteerHours', '/volunteer-hours'] });
 registerTableRoutes({ collectionPath: '/reviews', table: 'reviews', aliases: ['/review', '/api/reviews'] });
+
+app.post('/volunteerHours/adjust', requireAdmin, async (req, res) => {
+  try {
+    const studentId = Number(req.body?.student_id);
+    const hours = Number(req.body?.hours);
+    const operation = String(req.body?.operation || 'add').trim().toLowerCase();
+    const note = String(req.body?.note || '').trim().slice(0, 255) || null;
+
+    if (!Number.isInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({ status: 'error', message: 'A valid volunteer ID is required' });
+    }
+
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 10000) {
+      return res.status(400).json({ status: 'error', message: 'Hours must be greater than 0 and no more than 10000' });
+    }
+
+    if (!['add', 'remove'].includes(operation)) {
+      return res.status(400).json({ status: 'error', message: 'Operation must be add or remove' });
+    }
+
+    const [studentRows] = await db.query(
+      'SELECT id FROM `user` WHERE id = ? AND role_id = 3 LIMIT 1',
+      [studentId]
+    );
+
+    if (!studentRows.length) {
+      return res.status(404).json({ status: 'error', message: 'Student volunteer not found' });
+    }
+
+    const delta = Number((operation === 'remove' ? -hours : hours).toFixed(2));
+    const [result] = await db.query(
+      `
+      INSERT INTO \`volunteer_hour_adjustments\` (student_id, hours_delta, note, created_by)
+      VALUES (?, ?, ?, NULL)
+      `,
+      [studentId, delta, note]
+    );
+
+    return res.status(201).json({
+      status: 'ok',
+      message: 'Volunteer hours adjusted successfully',
+      adjustment_id: result.insertId,
+      student_id: studentId,
+      hours_delta: delta.toFixed(2)
+    });
+  } catch (err) {
+    console.error('Volunteer hours adjustment error:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 app.get(['/announcements', '/announcement', '/api/announcements'], async (req, res) => {
   try {
@@ -1886,6 +2011,72 @@ app.post('/volunteerHours/send', async (req, res) => {
     });
   }
 });
+app.post('/volunteerHours/cancel', async (req, res) => {
+  try {
+    const studentId = Number(
+      req.body?.student_id ??
+      req.body?.volunteer_id ??
+      req.body?.id
+    );
+
+    if (!Number.isInteger(studentId) || studentId <= 0) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'A valid student ID is required'
+      });
+    }
+
+    const [assignmentRows] = await db.query(
+      `
+      SELECT id, status
+      FROM \`volunteer_assignments\`
+      WHERE student_id = ?
+        AND status IN ('requesting_confirmation', 'requested')
+      ORDER BY id DESC
+      LIMIT 1
+      `,
+      [studentId]
+    );
+
+    const assignment = assignmentRows[0] || null;
+    if (!assignment) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'This student is not waiting for teacher check-in'
+      });
+    }
+
+    await db.query(
+      `
+      UPDATE \`volunteer_assignments\`
+      SET
+        status = 'cancelled',
+        approved = 0,
+        approved_by = NULL,
+        approved_at = NULL,
+        check_in = NULL,
+        check_out = NULL,
+        total_hours = 0.00
+      WHERE id = ?
+        AND status IN ('requesting_confirmation', 'requested')
+      `,
+      [assignment.id]
+    );
+
+    return res.json({
+      status: 'ok',
+      message: 'Volunteer assignment cancelled successfully',
+      volunteer_assignment_id: assignment.id
+    });
+  } catch (err) {
+    console.error('Cancel volunteer assignment error:', err);
+    return res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
+  }
+});
+
 app.post('/volunteerHours/check-in', async (req, res) => {
   try {
     const requestedStudentId = Number(

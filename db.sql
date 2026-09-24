@@ -244,6 +244,16 @@ CREATE TABLE volunteer_hours (
   INDEX idx_volunteer_hours_assignment (volunteer_assignment_id)
 );
 
+CREATE TABLE volunteer_hour_adjustments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id INT NOT NULL,
+  hours_delta DECIMAL(10,2) NOT NULL,
+  note VARCHAR(255) DEFAULT NULL,
+  created_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_volunteer_adjustments_student (student_id)
+);
+
 SET SQL_MODE=@OLD_SQL_MODE;
 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
