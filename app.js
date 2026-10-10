@@ -36,7 +36,7 @@ try {
 const allowedColumns = {
   role: ['id', 'name'],
   user: ['id', 'first_name', 'last_name', 'email_address', 'role_id', 'password', 'grade'],
-  class: ['id', 'name', 'teacher_id', 'room_id', 'room', 'period', 'time', 'grade_level'],
+  class: ['id', 'name', 'teacher_id', 'room_id', 'room', 'period', 'time', 'grade_level', 'schedule_days'],
   room: ['id', 'name', 'event_id', 'class_id', 'period'],
   message: ['id', 'sender_id', 'receiver_id', 'message'],
   schedule: ['id', 'name', 'decription', 'event_id', 'student_id', 'student_name', 'time', 'period', 'teacher', 'room', 'class_name'],
@@ -47,7 +47,7 @@ const allowedColumns = {
   club_has_event: ['club_id', 'event_id'],
   attendance: ['id', 'student_id', 'class_id', 'teacher_id', 'date', 'status', 'marked_by'],
   volunteer_requests: ['id', 'teacher_id', 'student_id', 'class_id', 'message', 'status', 'approved', 'approved_by', 'approved_at', 'created_at', 'updated_at'],
-  volunteer_assignments: ['id', 'volunteer_request_id', 'student_id', 'class_id', 'teacher_id', 'assigned_by', 'status', 'approved', 'approved_by', 'approved_at', 'check_in', 'check_out', 'total_hours', 'created_at', 'updated_at'],
+  volunteer_assignments: ['id', 'volunteer_request_id', 'student_id', 'class_id', 'teacher_id', 'assigned_by', 'status', 'approved', 'approved_by', 'approved_at', 'check_in', 'check_out', 'total_hours', 'created_at', 'updated_at', 'custom_teacher', 'custom_location'],
   volunteer_hours: [
   'id',
   'student_id',
@@ -189,6 +189,8 @@ async function ensureClassColumns() {
   await ensureColumn('class', 'period', 'VARCHAR(45) NULL');
   await ensureColumn('class', 'time', 'VARCHAR(45) NULL');
   await ensureColumn('class', 'grade_level', 'VARCHAR(45) NULL');
+  // Which schedule a class row belongs to: 'mon-thu' (default) or 'fri'
+  await ensureColumn('class', 'schedule_days', "VARCHAR(10) NOT NULL DEFAULT 'mon-thu'");
 }
 
 async function ensureUserColumns() {
@@ -411,6 +413,14 @@ async function ensureVolunteerTables() {
     await ensureColumn('volunteer_assignments', 'created_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP');
     await ensureColumn('volunteer_assignments', 'updated_at', 'TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
+    // Custom (free-text) assignments have no class or teacher account, so these must allow NULL.
+    await ensureColumnDefinition('volunteer_assignments', 'class_id', 'INT NULL');
+    await ensureColumnDefinition('volunteer_assignments', 'teacher_id', 'INT NULL');
+    await ensureColumn('volunteer_assignments', 'custom_teacher', 'VARCHAR(255) NULL');
+    await ensureColumn('volunteer_assignments', 'custom_location', 'VARCHAR(255) NULL');
+    // Check-in copies the assignment's class_id into volunteer_hours, so it must allow NULL too.
+    await ensureColumnDefinition('volunteer_hours', 'class_id', 'INT NULL');
+
     await ensureColumn('volunteer_hours', 'approved_by', 'INT NULL');
     await ensureColumnDefinition('volunteer_hours', 'approved', 'TINYINT(1) NOT NULL DEFAULT 0');
     await ensureColumnDefinition('volunteer_hours', 'approval_status', "VARCHAR(45) NOT NULL DEFAULT 'pending'");
@@ -529,6 +539,7 @@ ensureAnnouncementTable();
 ensureAnnouncementColumns();
 ensureAttendanceTable();
 ensureVolunteerTables();
+ensureSettingsTable();
 
 app.put('/users/:id', requireAdmin, async (req, res) => {
   try {
@@ -616,8 +627,9 @@ app.delete('/users/:id', requireAdmin, async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    if (Number(userRows[0].role_id) === 1) {
-      const [adminRows] = await connection.query('SELECT COUNT(*) AS count FROM `user` WHERE role_id = 1');
+    // Admin is role_id 2 in the role table (Teacher = 1, Student = 3)
+    if (Number(userRows[0].role_id) === 2) {
+      const [adminRows] = await connection.query('SELECT COUNT(*) AS count FROM `user` WHERE role_id = 2');
       if (Number(adminRows[0].count) <= 1) {
         await connection.rollback();
         return res.status(400).json({ status: 'error', message: 'The last admin user cannot be deleted' });
@@ -973,6 +985,163 @@ app.post('/user_schedules', requireAdmin, async (req, res) => {
   }
 });
 
+// ---- Settings table (key/value store) ----
+async function ensureSettingsTable() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS \`settings\` (
+        \`key\` VARCHAR(64) NOT NULL,
+        \`value\` TEXT NULL,
+        \`updated_at\` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`key\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err) {
+    console.error('Unable to ensure settings table:', err.message);
+  }
+}
+
+async function getSetting(key, fallback = null) {
+  try {
+    const [rows] = await db.query('SELECT `value` FROM `settings` WHERE `key` = ? LIMIT 1', [key]);
+    if (!rows.length) return fallback;
+    return rows[0].value;
+  } catch (err) {
+    console.error(`getSetting(${key}) failed:`, err.message);
+    return fallback;
+  }
+}
+
+async function setSetting(key, value) {
+  await db.query(
+    'INSERT INTO `settings` (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)',
+    [key, String(value)]
+  );
+}
+
+async function isRamadanModeOn() {
+  const raw = await getSetting('ramadan_mode', '0');
+  return String(raw).trim() === '1';
+}
+
+// ---- School clock: one source of truth for "what day/time is it at school" ----
+// Every browser asks the server, so all computers agree on Friday vs Mon-Thu.
+const SCHOOL_TIME_ZONE = process.env.SCHOOL_TIME_ZONE || 'America/Chicago';
+
+function getSchoolClock(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SCHOOL_TIME_ZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date);
+
+  const pick = (type) => parts.find((part) => part.type === type)?.value;
+  const weekday = pick('weekday'); // Mon, Tue, ... Sun
+  let minutes = Number(pick('hour')) * 60 + Number(pick('minute'));
+
+  let dayType = 'weekend';
+  if (['Mon', 'Tue', 'Wed', 'Thu'].includes(weekday)) dayType = 'mon-thu';
+  if (weekday === 'Fri') dayType = 'fri';
+
+  // Testing only: set SCHEDULE_TEST_DAY (mon-thu | fri | weekend) and/or
+  // SCHEDULE_TEST_TIME (HH:MM, 24h) in .env, restart, and remove when done.
+  const testDay = String(process.env.SCHEDULE_TEST_DAY || '').trim().toLowerCase();
+  if (['mon-thu', 'fri', 'weekend'].includes(testDay)) dayType = testDay;
+  const testTime = String(process.env.SCHEDULE_TEST_TIME || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (testTime) minutes = Number(testTime[1]) * 60 + Number(testTime[2]);
+
+  return { dayType, weekday, minutes, timeZone: SCHOOL_TIME_ZONE };
+}
+
+app.get('/api/schedule-now', async (req, res) => {
+  try {
+    const clock = getSchoolClock();
+    const ramadanMode = await isRamadanModeOn();
+
+    // Ramadan mode: Mon-Fri runs the Friday schedule. Weekend stays weekend.
+    let effectiveDayType = clock.dayType;
+    if (ramadanMode && (clock.dayType === 'mon-thu' || clock.dayType === 'fri')) {
+      effectiveDayType = 'fri';
+    }
+
+    res.json({
+      status: 'ok',
+      ...clock,
+      dayType: effectiveDayType,        // effective schedule for the whole school
+      baseDayType: clock.dayType,       // what the clock says without Ramadan applied
+      ramadanMode,
+      iso: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Schedule clock error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Ramadan mode toggle: admin-only. Persists to the settings table.
+app.get('/api/ramadan-mode', async (req, res) => {
+  try {
+    const enabled = await isRamadanModeOn();
+    res.json({ status: 'ok', enabled, ramadanMode: enabled });
+  } catch (err) {
+    console.error('Ramadan mode read error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/api/ramadan-mode', requireAdmin, async (req, res) => {
+  try {
+    const enabled = req.body?.enabled === true || Number(req.body?.enabled) === 1;
+    await setSetting('ramadan_mode', enabled ? '1' : '0');
+
+    const clock = getSchoolClock();
+    let effectiveDayType = clock.dayType;
+    if (enabled && (clock.dayType === 'mon-thu' || clock.dayType === 'fri')) {
+      effectiveDayType = 'fri';
+    }
+
+    res.json({
+      status: 'ok',
+      enabled,
+      ramadanMode: enabled,
+      ...clock,
+      dayType: effectiveDayType,
+      baseDayType: clock.dayType,
+    });
+  } catch (err) {
+    console.error('Ramadan toggle error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Classes list. By default only Monday-Thursday rows are returned, so every
+// existing screen behaves exactly as before. Ask for Friday rows with
+// ?schedule_days=fri, or everything with ?schedule_days=all.
+app.get(['/classes', '/class'], async (req, res) => {
+  try {
+    const { schedule_days: scheduleDaysParam, ...otherFilters } = req.query;
+    const { sql, values } = buildQuery('class', otherFilters);
+
+    const requested = String(scheduleDaysParam || '').trim().toLowerCase();
+    let finalSql = sql;
+    const finalValues = [...values];
+
+    if (requested !== 'all') {
+      const wanted = requested === 'fri' ? 'fri' : 'mon-thu';
+      finalSql += (sql.includes(' WHERE ') ? ' AND ' : ' WHERE ') + '`schedule_days` = ?';
+      finalValues.push(wanted);
+    }
+
+    const [rows] = await db.query(finalSql, finalValues);
+    res.json({ status: 'ok', database: 'connected', mysqlResult: rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 registerTableRoutes({ collectionPath: '/roles', table: 'role' });
 registerTableRoutes({ collectionPath: '/users', table: 'user', aliases: ['/user'] });
 registerTableRoutes({ collectionPath: '/classes', table: 'class', aliases: ['/class'] });
@@ -1039,7 +1208,9 @@ app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
         va.approved AS assignment_approved,
         va.check_in AS check_in,
         va.check_out AS check_out,
-        va.total_hours AS assignment_hours
+        va.total_hours AS assignment_hours,
+        va.custom_teacher AS custom_teacher,
+        va.custom_location AS custom_location
 
       FROM user u
 
@@ -1098,12 +1269,19 @@ app.get(['/volunteers', '/volunteer', '/api/volunteers'], async (req, res) => {
         status = 'requesting_confirmation';
       }
 
+      // Only students with a live assignment keep its class/teacher details.
+      // Otherwise a finished or cancelled assignment would still show up as their
+      // "current" class, prefill the dropdown, and appear on that teacher's list.
+      const hasLiveAssignment = status !== 'available';
+
       return {
         ...row,
         name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
         status,
-        assigned_class_id: row.assigned_class_id || null,
-        assigned_teacher_id: row.assigned_teacher_id || null,
+        assigned_class_id: hasLiveAssignment ? (row.assigned_class_id || null) : null,
+        assigned_teacher_id: hasLiveAssignment ? (row.assigned_teacher_id || null) : null,
+        custom_teacher: hasLiveAssignment ? (row.custom_teacher || null) : null,
+        custom_location: hasLiveAssignment ? (row.custom_location || null) : null,
         total_hours: (Number(row.total_hours || 0) + Number(row.manual_hours || 0)).toFixed(2),
         manual_hours: Number(row.manual_hours || 0).toFixed(2)
       };
@@ -1642,7 +1820,7 @@ app.get('/attendance', async (req, res) => {
 app.post('/attendance', async (req, res) => {
   try {
     const { student_id, class_id, teacher_id, date, status, marked_by } = req.body;
-    
+
     if (!student_id || !class_id || !teacher_id || !date) {
       return res.status(400).json({ status: 'error', message: 'Missing required fields' });
     }
@@ -1677,7 +1855,7 @@ app.post('/attendance', async (req, res) => {
 app.post('/attendance/bulk', async (req, res) => {
   try {
     const { records } = req.body;
-    
+
     if (!Array.isArray(records) || records.length === 0) {
       return res.status(400).json({ status: 'error', message: 'Records array required' });
     }
@@ -1712,7 +1890,7 @@ app.post('/attendance/bulk', async (req, res) => {
 app.put('/attendance/:id', async (req, res) => {
   try {
     const { status, marked_by } = req.body;
-    
+
     if (!status) {
       return res.status(400).json({ status: 'error', message: 'Status required' });
     }
@@ -1731,14 +1909,14 @@ app.put('/attendance/:id', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body; 
-    
+    const { username, password } = req.body;
+
     // Ensure you are querying 'email_address' and 'password'
     const [rows] = await db.query(
-      'SELECT * FROM `user` WHERE `email_address` = ? AND `password` = ?', 
+      'SELECT * FROM `user` WHERE `email_address` = ? AND `password` = ?',
       [username, password]
     );
-    
+
     if (rows.length > 0) {
       res.status(200).json({ status: 'ok', message: 'Login successful', user: rows[0] });
     } else {
@@ -1756,14 +1934,14 @@ app.post('/api/request-reset', async (req, res) => {
   try {
     // 1. Save token to DB
     const [result] = await db.query('UPDATE `user` SET `reset_token` = ? WHERE `email_address` = ?', [token, email]);
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
     // 2. Log to console
     console.log(`Reset Token for ${email}: ${token}`);
-    
+
     // 3. Attempt to send email, but don't crash if it fails
     try {
       await transporter.sendMail({
@@ -1787,12 +1965,12 @@ app.post('/api/request-reset', async (req, res) => {
 app.get('/api/class-students', (req, res) => {
   const classId = req.query.class_id;
   const query = `
-    SELECT sc.*, u.first_name, u.last_name 
+    SELECT sc.*, u.first_name, u.last_name
     FROM student_class sc
     JOIN user u ON sc.user_iduser = u.id
     WHERE sc.class_idclass = ?
   `;
-  
+
   db.query(query, [classId], (err, results) => {
     if (err) {
       console.error('Error fetching class students:', err);
@@ -1804,7 +1982,7 @@ app.get('/api/class-students', (req, res) => {
 app.get('/student_class', (req, res) => {
   const classId = req.query.class_idclass;
   const query = `
-    SELECT sc.*, u.first_name, u.last_name 
+    SELECT sc.*, u.first_name, u.last_name
     FROM student_class sc
     JOIN user u ON sc.user_iduser = u.id
     WHERE sc.class_idclass = ?
@@ -1836,24 +2014,55 @@ app.get('/classes', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
+// Sends a volunteer either to a real class/teacher (teacher_id + class_id)
+// or to a free-text custom destination (custom_teacher + custom_location).
 app.post('/volunteerHours/send', async (req, res) => {
   try {
     const studentId = Number(req.body?.student_id);
-    const teacherId = Number(req.body?.teacher_id);
-    const classId = Number(req.body?.class_id);
+    const customTeacher = String(req.body?.custom_teacher || '').trim().slice(0, 255);
+    const customLocation = String(req.body?.custom_location || '').trim().slice(0, 255);
+    const isCustom = Boolean(customTeacher || customLocation);
 
-    if (
-      !Number.isInteger(studentId) ||
-      studentId <= 0 ||
-      !Number.isInteger(teacherId) ||
-      teacherId <= 0 ||
-      !Number.isInteger(classId) ||
-      classId <= 0
-    ) {
+    let teacherId = null;
+    let classId = null;
+    let resolvedCustomTeacher = customTeacher;
+
+    if (!Number.isInteger(studentId) || studentId <= 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'student_id, teacher_id, and class_id are required'
+        message: 'A valid student_id is required'
       });
+    }
+
+    if (isCustom) {
+      if (!customTeacher || !customLocation) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Both custom_teacher and custom_location are required'
+        });
+      }
+
+      if (customTeacher.trim().split(/\s+/).length < 2) {
+        return res.status(400).json({
+          status: 'error',
+          message: "Enter the teacher's first and last name"
+        });
+      }
+    } else {
+      teacherId = Number(req.body?.teacher_id);
+      classId = Number(req.body?.class_id);
+
+      if (
+        !Number.isInteger(teacherId) ||
+        teacherId <= 0 ||
+        !Number.isInteger(classId) ||
+        classId <= 0
+      ) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'student_id, teacher_id, and class_id are required'
+        });
+      }
     }
 
     // Make sure the selected volunteer is an actual Student.
@@ -1882,27 +2091,70 @@ app.post('/volunteerHours/send', async (req, res) => {
 
     const student = studentRows[0];
 
-    // Make sure the target teacher exists.
-    const [teacherRows] = await db.query(
-      `
-      SELECT
-        id,
-        first_name,
-        last_name,
-        email_address,
-        role_id
-      FROM \`user\`
-      WHERE id = ?
-      LIMIT 1
-      `,
-      [teacherId]
-    );
+    if (isCustom) {
+      // The typed teacher must be a real teacher: exact first + last name,
+      // case-insensitive. The assignment is then linked to that teacher's
+      // account so it shows up on their dashboard.
+      const normalizeName = (value) =>
+        String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      const wantedName = normalizeName(customTeacher);
 
-    if (!teacherRows.length) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Teacher not found'
-      });
+      const [teacherNameRows] = await db.query(
+        `
+        SELECT id, first_name, last_name
+        FROM \`user\`
+        WHERE role_id = (
+          SELECT id FROM \`role\` WHERE LOWER(name) = 'teacher' LIMIT 1
+        )
+        `
+      );
+
+      const nameMatches = teacherNameRows.filter(
+        (row) =>
+          normalizeName(`${row.first_name || ''} ${row.last_name || ''}`) === wantedName
+      );
+
+      if (!nameMatches.length) {
+        return res.status(400).json({
+          status: 'error',
+          message: `No teacher named "${customTeacher}" was found. Enter the teacher's exact first and last name.`
+        });
+      }
+
+      if (nameMatches.length > 1) {
+        return res.status(400).json({
+          status: 'error',
+          message: `More than one teacher is named "${customTeacher}". Use the class dropdown instead.`
+        });
+      }
+
+      teacherId = nameMatches[0].id;
+      resolvedCustomTeacher = `${nameMatches[0].first_name || ''} ${nameMatches[0].last_name || ''}`.trim();
+    }
+
+    // Make sure the target teacher exists (skipped for custom destinations).
+    if (!isCustom) {
+      const [teacherRows] = await db.query(
+        `
+        SELECT
+          id,
+          first_name,
+          last_name,
+          email_address,
+          role_id
+        FROM \`user\`
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [teacherId]
+      );
+
+      if (!teacherRows.length) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Teacher not found'
+        });
+      }
     }
 
     // Make sure the student isn't already assigned to an active
@@ -1932,6 +2184,10 @@ app.post('/volunteerHours/send', async (req, res) => {
       });
     }
 
+    const assignedBy = req.body?.assigned_by
+      ? Number(req.body.assigned_by)
+      : null;
+
     // Create the assignment.
     const [assignmentResult] = await db.query(
       `
@@ -1948,7 +2204,9 @@ app.post('/volunteerHours/send', async (req, res) => {
         approved_at,
         check_in,
         check_out,
-        total_hours
+        total_hours,
+        custom_teacher,
+        custom_location
       )
       VALUES (
         NULL,
@@ -1962,19 +2220,19 @@ app.post('/volunteerHours/send', async (req, res) => {
         NOW(),
         NULL,
         NULL,
-        0.00
+        0.00,
+        ?,
+        ?
       )
       `,
       [
         studentId,
         classId,
         teacherId,
-        req.body?.assigned_by
-          ? Number(req.body.assigned_by)
-          : null,
-        req.body?.assigned_by
-          ? Number(req.body.assigned_by)
-          : null
+        assignedBy,
+        assignedBy,
+        isCustom ? resolvedCustomTeacher : null,
+        isCustom ? customLocation : null
       ]
     );
 
@@ -1982,7 +2240,7 @@ app.post('/volunteerHours/send', async (req, res) => {
 
     return res.json({
       status: 'ok',
-      message: 'Student sent to teacher successfully',
+      message: 'Student sent successfully',
 
       student: {
         id: student.id,
@@ -1997,6 +2255,8 @@ app.post('/volunteerHours/send', async (req, res) => {
         student_id: studentId,
         class_id: classId,
         teacher_id: teacherId,
+        custom_teacher: isCustom ? resolvedCustomTeacher : null,
+        custom_location: isCustom ? customLocation : null,
         status: 'requesting_confirmation',
         approved: 1,
         total_hours: '0.00'
@@ -2653,6 +2913,8 @@ app.post('/classes/import-csv', requireAdmin, async (req, res) => {
       const gradeLevel = pickRowValue(normalizedRow, ['grade', 'grade_level']);
       const time = pickRowValue(normalizedRow, ['timings', 'time']);
       const period = pickRowValue(normalizedRow, ['a_b_day', 'ab_day', 'period']);
+      const rawDays = pickRowValue(normalizedRow, ['days', 'schedule_days', 'schedule_day']);
+      const scheduleDays = /^fri/i.test(rawDays) ? 'fri' : 'mon-thu';
 
       if (!className) continue;
 
@@ -2672,9 +2934,19 @@ app.post('/classes/import-csv', requireAdmin, async (req, res) => {
         }
         // --- end step 2 ---
 
+        // Skip exact duplicates (same class, teacher, time and schedule day)
+        const [duplicateRows] = await db.query(
+          'SELECT id FROM `class` WHERE name = ? AND `time` <=> ? AND teacher_id <=> ? AND schedule_days = ? LIMIT 1',
+          [className, time || null, teacherId, scheduleDays]
+        );
+        if (duplicateRows.length) {
+          errors.push({ index: index + 2, message: `"${className}" at ${time || 'no time'} already exists — skipped.` });
+          continue;
+        }
+
         await db.query(
-          'INSERT INTO `class` (name, teacher_id, room, grade_level, time, period) VALUES (?, ?, ?, ?, ?, ?)',
-          [className, teacherId, room || null, gradeLevel || null, time || null, period || null]
+          'INSERT INTO `class` (name, teacher_id, room, grade_level, time, period, schedule_days) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [className, teacherId, room || null, gradeLevel || null, time || null, period || null, scheduleDays]
         );
         insertedCount += 1;
       } catch (rowErr) {

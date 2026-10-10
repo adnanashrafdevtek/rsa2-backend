@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS `class` (
   `teacher_id` INT(11) NOT NULL,
   `room_id` INT(11) NOT NULL,
   `grade_level` VARCHAR(45) NULL DEFAULT NULL,
+  `room` VARCHAR(255) NULL DEFAULT NULL,
+  `period` VARCHAR(45) NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   INDEX `fk_class_user_idx` (`teacher_id` ASC) ,
   INDEX `fk_class_room1_idx` (`room_id` ASC) ,
@@ -164,7 +166,6 @@ CREATE TABLE IF NOT EXISTS `club_has_event` (
     REFERENCES `event` (`id`)
     ON DELETE NO ACTION
     ON UPDATE NO ACTION)
-  
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8;
 
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 );
+
 CREATE TABLE volunteer_requests (
   id INT AUTO_INCREMENT PRIMARY KEY,
   teacher_id INT NOT NULL,
@@ -258,7 +260,6 @@ SET SQL_MODE=@OLD_SQL_MODE;
 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;
 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;
 
-
 INSERT INTO `role` (`name`) VALUES ('Admin');
 INSERT INTO `role` (`name`) VALUES ('Teacher');
 INSERT INTO `role` (`name`) VALUES ('Student');
@@ -290,22 +291,18 @@ INSERT INTO `reviews` (`user_id`, `rating`, `comment`) VALUES
 (1, 5, 'Great system and very easy to use!'),
 (2, 4, 'Helpful, though a few features could be faster.');
 
-
 ALTER TABLE `class` DROP PRIMARY KEY, ADD PRIMARY KEY (`id`);
 ALTER TABLE `class` MODIFY COLUMN `teacher_id` INT NULL;
 ALTER TABLE `class` MODIFY COLUMN `room_id` INT NULL;
 
 SET FOREIGN_KEY_CHECKS = 0;
 
--- Move Teacher (currently id=1) to a temporary holding spot
 UPDATE role SET id = 99 WHERE id = 1;
 UPDATE user SET role_id = 99 WHERE role_id = 1;
 
--- Move Admin (currently id=2) into the now-empty id=1
 UPDATE role SET id = 1 WHERE id = 2;
 UPDATE user SET role_id = 1 WHERE role_id = 2;
 
--- Move Teacher from the temporary spot (99) into id=2
 UPDATE role SET id = 2 WHERE id = 99;
 UPDATE user SET role_id = 2 WHERE role_id = 99;
 
@@ -314,8 +311,7 @@ SET FOREIGN_KEY_CHECKS = 1;
 INSERT INTO `announcements` (`title`, `content`, `created_by`) VALUES
 ('Welcome to the New Term', 'Please make sure all attendance records are updated weekly.', 1),
 ('System Maintenance', 'Scheduled downtime this coming Saturday at midnight.', 1);
-ALTER TABLE `user` 
-ADD COLUMN `password` VARCHAR(45) NOT NULL AFTER `role_id`;
+
 update `user` set password="test";
 UPDATE `user` SET `role_id` = '1' WHERE (`id` = '1') and (`role_id` = '2');
 
