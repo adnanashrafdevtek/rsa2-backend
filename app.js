@@ -627,14 +627,21 @@ app.delete('/users/:id', requireAdmin, async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'User not found' });
     }
 
-    // Admin is role_id 2 in the role table (Teacher = 1, Student = 3)
-    if (Number(userRows[0].role_id) === 2) {
-      const [adminRows] = await connection.query('SELECT COUNT(*) AS count FROM `user` WHERE role_id = 2');
-      if (Number(adminRows[0].count) <= 1) {
-        await connection.rollback();
-        return res.status(400).json({ status: 'error', message: 'The last admin user cannot be deleted' });
-      }
-    }
+    const [adminRoleRows] = await connection.query(
+  "SELECT id FROM `role` WHERE LOWER(name) = 'admin' LIMIT 1"
+);
+const adminRoleId = adminRoleRows[0]?.id;
+
+if (adminRoleId && Number(userRows[0].role_id) === adminRoleId) {
+  const [adminRows] = await connection.query(
+    'SELECT COUNT(*) AS count FROM `user` WHERE role_id = ?',
+    [adminRoleId]
+  );
+  if (Number(adminRows[0].count) <= 1) {
+    await connection.rollback();
+    return res.status(400).json({ status: 'error', message: 'The last admin user cannot be deleted' });
+  }
+}
 
     await connection.query('UPDATE `class` SET teacher_id = NULL WHERE teacher_id = ?', [userId]);
     await connection.query('UPDATE `announcements` SET created_by = NULL WHERE created_by = ?', [userId]);
@@ -1911,14 +1918,19 @@ app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    // Ensure you are querying 'email_address' and 'password'
     const [rows] = await db.query(
-      'SELECT * FROM `user` WHERE `email_address` = ? AND `password` = ?',
+      `SELECT u.*, r.name AS role_name
+       FROM \`user\` u
+       JOIN \`role\` r ON r.id = u.role_id
+       WHERE u.email_address = ? AND u.password = ?`,
       [username, password]
     );
 
     if (rows.length > 0) {
-      res.status(200).json({ status: 'ok', message: 'Login successful', user: rows[0] });
+      const user = { ...rows[0] };
+      delete user.password;
+      delete user.reset_token;
+      res.status(200).json({ status: 'ok', message: 'Login successful', user });
     } else {
       res.status(401).json({ status: 'error', message: 'Invalid credentials' });
     }
